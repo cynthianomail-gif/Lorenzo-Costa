@@ -301,40 +301,68 @@ document.addEventListener('webkitfullscreenchange', updateFsBtn);
 
 // === 遊戲設定與資料 ===
 const COLS = 5;
-const ROWS = 4;
-const CELL_SIZE = 130;
-const GRID_W = COLS * CELL_SIZE;   // 650
-const GRID_H = ROWS * CELL_SIZE;   // 520
+const ROWS = 3;
+const CELL_SIZE = 150;
+const GRID_W = COLS * CELL_SIZE;
+const GRID_H = ROWS * CELL_SIZE;
 const GRID_X = 265;
-const GRID_Y = 100;
+const GRID_Y = 132;
 
-// id 偶數 = 角色（character），奇數 = 武器（weapon）
-// colorId = Math.floor(id / 2)：0=紅,1=黃,2=藍,3=綠
 const SYMBOLS = [
-  { id: 0, name: '紅色角色', color: '#e63946', colorId: 0, type: 'char' },
-  { id: 1, name: '紅色武器', color: '#e63946', colorId: 0, type: 'weapon' },
-  { id: 2, name: '黃色角色', color: '#f4a261', colorId: 1, type: 'char' },
-  { id: 3, name: '黃色武器', color: '#f4a261', colorId: 1, type: 'weapon' },
-  { id: 4, name: '藍色角色', color: '#2563eb', colorId: 2, type: 'char' },
-  { id: 5, name: '藍色武器', color: '#2563eb', colorId: 2, type: 'weapon' },
-  { id: 6, name: '綠色角色', color: '#059669', colorId: 3, type: 'char' },
-  { id: 7, name: '綠色武器', color: '#059669', colorId: 3, type: 'weapon' },
+  { id: 0, name: '戰神意志', color: '#e63946' },
+  { id: 1, name: '征服火輪', color: '#f4a261' },
+  { id: 2, name: '嗜血追擊', color: '#6d28d9' },
+  { id: 3, name: '風暴突擊', color: '#2563eb' },
+  { id: 4, name: '戰場凶兆', color: '#7c3aed' },
+  { id: 5, name: '不屈戰魂', color: '#059669' },
 ];
-const COLOR_NAMES = ['紅', '黃', '藍', '綠'];
-const COLOR_HEX   = ['#e63946', '#f4a261', '#2563eb', '#059669'];
+const WILD_ID = 6;
 
-// PAYOUTS[symId] = [rate3, rate4, rate5]
+// 賠率：PAYOUTS[symbolId][matchCount-3]（matchCount 3~5）
+// WILD_ID(6) 不在此表中；計算彩金時必須先將 WILD 解析為被替代符號的 ID，再查此表
+// 賠率：依設計排名 戰神意志>嗜血追擊>戰場凶兆>征服火輪>風暴突擊>不屈戰魂
 const PAYOUTS = [
-  [0.40, 0.60, 0.80], // 0 紅色角色
-  [0.20, 0.30, 0.50], // 1 紅色武器
-  [0.20, 0.30, 0.60], // 2 黃色角色
-  [0.20, 0.30, 0.40], // 3 黃色武器
-  [0.20, 0.30, 0.60], // 4 藍色角色
-  [0.20, 0.30, 0.40], // 5 藍色武器
-  [0.20, 0.30, 0.60], // 6 綠色角色
-  [0.20, 0.30, 0.40], // 7 綠色武器
+  [0.6, 2.4, 12],  // 0 戰神意志（rank 1）
+  [0.3, 1.2,  6],  // 1 征服火輪（rank 4）
+  [0.5, 2.0, 10],  // 2 嗜血追擊（rank 2）
+  [0.2, 0.8,  4],  // 3 風暴突擊（rank 5）
+  [0.4, 1.6,  8],  // 4 戰場凶兆（rank 3）
+  [0.1, 0.4,  2],  // 5 不屈戰魂（rank 6）
 ];
 
+const PAYLINES = [
+  [1,1,1,1,1],[0,0,0,0,0],[2,2,2,2,2],
+  [0,1,2,1,0],[2,1,0,1,2],[0,0,1,2,2],
+  [2,2,1,0,0],[1,0,0,0,1],[1,2,2,2,1],
+  [0,1,1,1,0],[2,1,1,1,2],[0,0,1,0,0],
+  [2,2,1,2,2],[1,0,1,2,1],[1,2,1,0,1],
+];
+
+// 底列特殊格類型（只保留 KEY 和 WILD，倍數改為圖示隱藏屬性）
+const SPECIAL = { NONE: 0, WILD: WILD_ID, KEY: 7, CROWN: 8, NECKLACE: 9 };
+const PROCESSED = 99;
+
+// 圖示隱藏倍數權重（cell.mult）
+// mult:0 = 70（不出現）；其餘 = 各倍數佔比 × 0.30，使整體出現率 ≈ 30%
+const CELL_MULT_WEIGHTS = [
+  { mult: 0,    w: 70   },
+  { mult: 2,    w: 4.20 }, { mult: 3,    w: 3.66 }, { mult: 4,    w: 3.23 },
+  { mult: 5,    w: 4.06 }, { mult: 6,    w: 4.85 }, { mult: 8,    w: 4.18 },
+  { mult: 10,   w: 3.23 }, { mult: 12,   w: 1.26 }, { mult: 15,   w: 0.29 },
+  { mult: 20,   w: 0.45 }, { mult: 25,   w: 0.26 }, { mult: 50,   w: 0.12 },
+  { mult: 100,  w: 0.12 }, { mult: 250,  w: 0.10 },
+  { mult: 500,  w: 0.03 }, { mult: 1000, w: 0.03 },
+];
+const CELL_MULT_TOTAL = CELL_MULT_WEIGHTS.reduce((s, e) => s + e.w, 0);
+
+function rollCellMult() {
+  let rand = Math.random() * CELL_MULT_TOTAL;
+  for (const { mult, w } of CELL_MULT_WEIGHTS) {
+    rand -= w;
+    if (rand <= 0) return mult;
+  }
+  return 0;
+}
 
 // 狀態機
 const STATE = {
