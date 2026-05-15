@@ -929,23 +929,18 @@ function applyGravity() {
   for (let c = 0; c < COLS; c++) {
     let emptySpaces = 0;
     for (let r = ROWS - 1; r >= 0; r--) {
-      if (board[c][r].id === -1) {
+      if (board[c][r].id === -1 && !board[c][r].isMerged) {
         emptySpaces++;
-      } else if (emptySpaces > 0) {
+      } else if (emptySpaces > 0 && !board[c][r].isMerged) {
         board[c][r + emptySpaces] = { ...board[c][r], yOffset: -emptySpaces * CELL_SIZE };
-        board[c][r] = { id: -1, mult: 0, yOffset: 0, isMatched: false, scale: 1, _flash: false };
+        board[c][r] = { id: -1, yOffset: 0, isMatched: false, scale: 1 };
       }
     }
     for (let i = 0; i < emptySpaces; i++) {
-      // 底列若已是 KEY / WILD，不賦予隱藏倍數
-      const isKeyOrWild = (i === ROWS - 1) &&
-        (bottomSpecial[c] === SPECIAL.KEY || bottomSpecial[c] === SPECIAL.WILD ||
-         bottomSpecial[c] === SPECIAL.CROWN || bottomSpecial[c] === SPECIAL.NECKLACE);
       board[c][i] = {
-        id: randomSymId(),
-        mult: isKeyOrWild ? 0 : rollCellMult(),
+        id: Math.floor(Math.random() * 8),
         yOffset: -(emptySpaces - i) * CELL_SIZE - 20,
-        isMatched: false, scale: 1, _flash: false
+        isMatched: false, scale: 1
       };
     }
   }
@@ -968,26 +963,10 @@ function updateGravity() {
   }
 }
 
-// === Task 9：底列特殊格（只剩 KEY 和 WILD）===
-const SPECIAL_WEIGHTS = [
-  { type: SPECIAL.WILD,     w: 10 },
-  { type: SPECIAL.KEY,      w:  8 },
-  { type: SPECIAL.CROWN,    w:  4 },
-  { type: SPECIAL.NECKLACE, w:  4 },
-  { type: SPECIAL.NONE,     w: 74 },
-];
-const SPECIAL_WEIGHTS_TOTAL = SPECIAL_WEIGHTS.reduce((s, e) => s + e.w, 0);
-
-
-
-// 每個特殊格的演繹節奏（幀數）：消除後立即全部可見，依序觸發
-const REVEAL_HOLD_FRAMES2 = 45;  // 觸發前停留（讓玩家看清楚）
-const REVEAL_AFTER_FRAMES = 22;  // 效果發動後緩衝
 
 
 // === JP 顯示條（倍數欄位左右兩側）===
 function drawJPBars(ctx) {
-  if (inFG) return;
   const cx = GRID_X + GRID_W / 2;   // 與倍數欄位同中心
   const by = GRID_Y - 58;
   const bh = 44;
@@ -1397,39 +1376,42 @@ function update(dt) {
 // === Task 3: 符號繪製 ===
 function drawSymbol(ctx, id, x, y, size, alpha) {
   alpha = alpha !== undefined ? alpha : 1;
+  if (id < 0 || id === undefined) return;
+  const sym = SYMBOLS[id];
+  if (!sym) return;
   ctx.save();
   ctx.globalAlpha = alpha;
 
-  if (id === WILD_ID) {
-    let grad = ctx.createLinearGradient(x, y, x, y + size);
-    grad.addColorStop(0, '#ffe066');
-    grad.addColorStop(1, '#f59e0b');
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.roundRect(x + 4, y + 4, size - 8, size - 8, 12);
-    ctx.fill();
-    ctx.fillStyle = '#fff';
-    ctx.font = `bold ${Math.floor(size * 0.5)}px Arial`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('W', x + size / 2, y + size / 2);
-  } else if (id >= 0 && id < 6 && iconImgs[id]) {
-    ctx.fillStyle = SYMBOLS[id].color + '33';
-    ctx.beginPath();
-    ctx.roundRect(x + 3, y + 3, size - 6, size - 6, 10);
-    ctx.fill();
+  // 背景色塊
+  const isChar = (id % 2 === 0);
+  ctx.fillStyle = sym.color + '44';
+  ctx.beginPath();
+  ctx.roundRect(x + 4, y + 4, size - 8, size - 8, 10);
+  ctx.fill();
+
+  // 符號圖示（有載入圖片就用圖片）
+  if (iconImgs[id]) {
     ctx.drawImage(iconImgs[id], x + 6, y + 6, size - 12, size - 12);
   } else {
-    ctx.fillStyle = (SYMBOLS[id] ? SYMBOLS[id].color : '#888');
-    ctx.beginPath();
-    ctx.roundRect(x + 4, y + 4, size - 8, size - 8, 10);
-    ctx.fill();
-    ctx.fillStyle = '#fff';
-    ctx.font = `bold 14px Arial`;
+    // 文字 fallback：角色用人形，武器用劍形
+    ctx.fillStyle = sym.color;
+    ctx.font = `bold ${Math.floor(size * 0.38)}px Arial`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(SYMBOLS[id] ? SYMBOLS[id].name : '?', x + size / 2, y + size / 2);
+    const icon = isChar ? '👤' : '⚔️';
+    ctx.fillText(icon, x + size / 2, y + size * 0.42);
+    ctx.font = `bold ${Math.floor(size * 0.18)}px Arial`;
+    ctx.fillStyle = '#fff';
+    ctx.fillText(sym.name, x + size / 2, y + size * 0.78);
   }
+
+  // 邊框細線
+  ctx.strokeStyle = sym.color + 'aa';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.roundRect(x + 4, y + 4, size - 8, size - 8, 10);
+  ctx.stroke();
+
   ctx.restore();
 }
 
