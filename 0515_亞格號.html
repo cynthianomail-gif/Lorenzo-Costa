@@ -305,8 +305,8 @@ const ROWS = 4;
 const CELL_SIZE = 130;
 const GRID_W = COLS * CELL_SIZE;   // 650
 const GRID_H = ROWS * CELL_SIZE;   // 520
-const GRID_X = 265;
-const GRID_Y = 100;
+const GRID_X = Math.floor((1280 - GRID_W) / 2);  // 315，水平置中
+const GRID_Y = 120;
 
 // id 偶數 = 角色（character），奇數 = 武器（weapon）
 // colorId = Math.floor(id / 2)：0=紅,1=黃,2=藍,3=綠
@@ -561,12 +561,12 @@ function startSpin() {
 
   winScore = 0;
 
-  // 掉落式：符號立即決定，從上方帶 yOffset 掉下來
+  // 掉落式：符號立即決定，整欄從盤面上方掉落（起點高於 GRID_Y）
+  const DROP_START = -(ROWS * CELL_SIZE + 80);  // 確保所有格都在 GRID_Y 上方
   for (let c = 0; c < COLS; c++) {
     board[c] = [];
     for (let r = 0; r < ROWS; r++) {
-      // 每格從不同高度掉落（row 越小起點越高），加上欄位錯開
-      board[c][r] = { id: Math.floor(Math.random() * 8), yOffset: -(ROWS - r) * CELL_SIZE - 60, isMatched: false, scale: 1 };
+      board[c][r] = { id: Math.floor(Math.random() * 8), yOffset: DROP_START, isMatched: false, scale: 1 };
     }
     colOffsets[c] = 0;
     colStates[c] = 'falling';
@@ -1593,29 +1593,16 @@ function drawBottomBar(ctx) {
   ctx.font = 'bold 14px Arial';
   ctx.fillText('BET: ' + betAmount, 460, BAR_Y + BAR_H / 2);
 
-  // 強開 按鈕（INFO 左側）
-  const hasForce = forceSpinType !== null;
-  ctx.fillStyle = hasForce ? 'rgba(133,77,14,0.9)' : '#1e293b';
+  // 強開 按鈕
+  ctx.fillStyle = forceSpinType ? '#7c3aed' : '#334155';
   ctx.beginPath();
   ctx.roundRect(155, 658, 68, 54, 8);
   ctx.fill();
-  if (hasForce) {
-    ctx.strokeStyle = '#fbbf24';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.roundRect(155, 658, 68, 54, 8);
-    ctx.stroke();
-  }
-  ctx.fillStyle = '#e2e8f0';
-  ctx.font = 'bold 13px Arial';
+  ctx.fillStyle = forceSpinType ? '#fff' : '#e2e8f0';
+  ctx.font = 'bold 14px Arial';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('強開', 189, 670);
-  ctx.fillStyle = hasForce ? '#fbbf24' : '#64748b';
-  ctx.font = '11px Arial';
-  const _keyLabels = { all_synth: '4色合成', synth_0: '紅合成', synth_1: '黃合成' };
-  const forceLabel = _keyLabels[forceSpinType] || '未設定';
-  ctx.fillText(forceLabel, 189, 695);
+  ctx.fillText('強開', 189, 685);
 
   // INFO 按鈕
   ctx.fillStyle = '#334155';
@@ -1721,7 +1708,6 @@ function draw() {
   drawTopStats(ctx);
   drawBossCardPick(ctx);
   drawForceMenu(ctx);
-  drawWinLog(ctx);
 }
 
 // === Canvas 事件監聽器 ===
