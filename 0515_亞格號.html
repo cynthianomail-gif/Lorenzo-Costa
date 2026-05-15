@@ -869,18 +869,19 @@ function updatePopping() {
 
   // Phase 1 (1~15): 符號縮小消失
   if (popWaitTimer <= 15) {
-    winLines.forEach(wl => wl.cells.forEach(({ c, r }) => {
-      board[c][r].scale = Math.max(0, 1 - popWaitTimer / 15);
-    }));
+    for (let c = 0; c < COLS; c++)
+      for (let r = 0; r < ROWS; r++)
+        if (board[c][r].isMatched) board[c][r].scale = Math.max(0, 1 - popWaitTimer / 15);
     if (popWaitTimer === 1) spawnPopParticles();
     return;
   }
 
-  // Phase 2: 清除符號 → 進入 GRAVITY
-  winLines.forEach(wl => wl.cells.forEach(({ c, r }) => {
-    board[c][r] = { id: -1, mult: 0, yOffset: 0, isMatched: false, scale: 1, _flash: false };
-  }));
+  // Phase 2: 清除 isMatched 格 → 進入 GRAVITY
+  for (let c = 0; c < COLS; c++)
+    for (let r = 0; r < ROWS; r++)
+      if (board[c][r].isMatched) board[c][r] = { id: -1, yOffset: 0, isMatched: false, scale: 1 };
 
+  popWaitTimer = 0;
   applyGravity();
   currentState = STATE.GRAVITY;
 }
@@ -888,22 +889,24 @@ function updatePopping() {
 const MAX_PARTICLES = 500;
 
 function spawnPopParticles() {
-  winLines.forEach(wl => wl.cells.forEach(({ c, r }) => {
-    const px = GRID_X + c * CELL_SIZE + CELL_SIZE / 2;
-    const py = GRID_Y + r * CELL_SIZE + CELL_SIZE / 2;
-    const color = (SYMBOLS[wl.symbolId] ? SYMBOLS[wl.symbolId].color : '#facc15');
-    for (let i = 0; i < 8; i++) {
-      const angle = (i / 8) * Math.PI * 2;
-      const speed = 2 + Math.random() * 3;
-      particles.push({
-        x: px, y: py,
-        vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed,
-        life: 30, maxLife: 30,
-        color, size: 4 + Math.random() * 4
-      });
+  for (let c = 0; c < COLS; c++) {
+    for (let r = 0; r < ROWS; r++) {
+      const cell = board[c][r];
+      if (!cell.isMatched) continue;
+      const px = GRID_X + c * CELL_SIZE + CELL_SIZE / 2;
+      const py = GRID_Y + r * CELL_SIZE + CELL_SIZE / 2;
+      const color = cell.isMerged
+        ? COLOR_HEX[cell.colorId]
+        : (SYMBOLS[cell.id] ? SYMBOLS[cell.id].color : '#facc15');
+      for (let i = 0; i < 8; i++) {
+        const angle = (i / 8) * Math.PI * 2;
+        const speed = 2 + Math.random() * 3;
+        particles.push({ x: px, y: py,
+          vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+          life: 30, maxLife: 30, color, size: 4 + Math.random() * 4 });
+      }
     }
-  }));
+  }
   if (particles.length > MAX_PARTICLES) particles.splice(0, particles.length - MAX_PARTICLES);
 }
 
@@ -1347,6 +1350,7 @@ function update(dt) {
         totalScore += win;
         comboCount++;
         if (comboCount === 1) stats.hits++;
+        popWaitTimer = 45;  // 顯示得分閃爍的幀數
         currentState = STATE.SHOWING_WIN;
       } else {
         // JP 判定：4 色全合成
