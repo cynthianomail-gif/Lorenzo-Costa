@@ -1382,32 +1382,26 @@ function drawSymbol(ctx, id, x, y, size, alpha) {
   ctx.save();
   ctx.globalAlpha = alpha;
 
-  // 背景色塊
   const isChar = (id % 2 === 0);
-  ctx.fillStyle = sym.color + '44';
+
+  // 背景色塊（漸層）
+  const grad = ctx.createLinearGradient(x, y, x, y + size);
+  grad.addColorStop(0, sym.color + 'cc');
+  grad.addColorStop(1, sym.color + '66');
+  ctx.fillStyle = grad;
   ctx.beginPath();
   ctx.roundRect(x + 4, y + 4, size - 8, size - 8, 10);
   ctx.fill();
 
-  // 符號圖示（有載入圖片就用圖片）
-  if (iconImgs[id]) {
-    ctx.drawImage(iconImgs[id], x + 6, y + 6, size - 12, size - 12);
-  } else {
-    // 文字 fallback：角色用人形，武器用劍形
-    ctx.fillStyle = sym.color;
-    ctx.font = `bold ${Math.floor(size * 0.38)}px Arial`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    const icon = isChar ? '👤' : '⚔️';
-    ctx.fillText(icon, x + size / 2, y + size * 0.42);
-    ctx.font = `bold ${Math.floor(size * 0.18)}px Arial`;
-    ctx.fillStyle = '#fff';
-    ctx.fillText(sym.name, x + size / 2, y + size * 0.78);
-  }
+  // 中央 emoji 圖示
+  ctx.font = `${Math.floor(size * 0.42)}px Arial`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(isChar ? '🧑' : '⚔️', x + size / 2, y + size / 2);
 
   // 邊框細線
-  ctx.strokeStyle = sym.color + 'aa';
-  ctx.lineWidth = 1;
+  ctx.strokeStyle = sym.color;
+  ctx.lineWidth = 1.5;
   ctx.beginPath();
   ctx.roundRect(x + 4, y + 4, size - 8, size - 8, 10);
   ctx.stroke();
