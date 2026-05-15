@@ -338,13 +338,17 @@ const PAYOUTS = [
 
 // 狀態機
 const STATE = {
-  IDLE:0, SPINNING:1, CHECKING:2, SHOWING_WIN:3,
-  POPPING:4, GRAVITY:5, REVEALING:6, UNLOCK_ANIM:7
+  IDLE:0, SPINNING:1, SYNTHESIS:2, SHOWING_WIN:3,
+  POPPING:4, GRAVITY:5
 };
 
 // ---- 遊戲狀態 ----
 let currentState = STATE.IDLE;
 let board = [];          // board[col][row] = { id, yOffset, isMatched, scale, _flash }
+// === 合成機制狀態 ===
+let splitCount = [1, 1, 1, 1];      // 各色分裂倍數（0=紅,1=黃,2=藍,3=綠）
+let synthesizedColors = new Set();   // 本局已合成的顏色（JP判定用）
+let mergedCells = [];                // [{col, row, colorId, size, colorId2?}]
 let bottomSpecial = [];  // bottomSpecial[col] = SPECIAL 類型（本局）
 let _affectedCols = [];  // 本次消除影響的欄位
 
@@ -514,98 +518,47 @@ function generateBoard() {
   for (let c = 0; c < COLS; c++) {
     board[c] = [];
     for (let r = 0; r < ROWS; r++) {
-      board[c][r] = { id: 0, mult: 0, yOffset: 0, isMatched: false, scale: 1, _flash: false };
+      board[c][r] = { id: Math.floor(Math.random() * 8), yOffset: 0, isMatched: false, scale: 1 };
     }
   }
-  bottomSpecial = new Array(COLS).fill(SPECIAL.NONE);
-  bottomSpecialAnim = new Array(COLS).fill(0);
 }
 
 function resetRoundState() {
-  // multiplier 不在此重置，改由 startSpin 重置，確保 IDLE 期間仍顯示上局倍數
   comboCount = 0;
-  bottomSpecial = new Array(COLS).fill(SPECIAL.NONE);
-  bottomSpecialAnim = new Array(COLS).fill(0);
-  flyingMultipliers = [];
-  flyingAttacks = [];
   flyingScores = [];
   particles = [];
   scoreTexts = [];
   comboTexts = [];
   winLines = [];
   _affectedCols = [];
-  revealSeq = [];
-  revealSeqIdx = 0;
-  revealColTimer = 0;
-  pendingMultFlights = [];
-  multFlightSeq = [];
-  multFlightIdx = 0;
-  multFlightTimer = 0;
-  unifiedRevealSeq = [];
-  unifiedRevealIdx = 0;
-  unifiedRevealTimer = 0;
   forceUsed = false;
   forceKeySpawned = 0;
   forceLineRows = null;
   forceLineRows2 = null;
   forceLineSymbol = -1;
+  // 合成狀態重置
+  splitCount = [1, 1, 1, 1];
+  synthesizedColors = new Set();
+  mergedCells = [];
 }
 
 // === 旋轉邏輯 ===
 function startSpin() {
   if (currentState !== STATE.IDLE) return;
-  if (!inFG) multiplier = 1; // FG 期間倍數持續累積，僅 NG 新一局才重置
-  fgMultCollectedThisRound = false;
-  keyCount = 0;
-  crownCount = 0;
-  necklaceCount = 0;
-  pendingMultToScoreApply = null;
+  if (bossCardPick.active) return;
   jpWinQueue = [];
   winLog = [];
-  triggeredChests = new Set();
-  heraSymbolRestrict = false; // 取消厄里斯符號限制
-  chestUnlockAnim = { active: false, timer: 0, idx: -1 };
-  // 每局重置所有怪獸血量
-  monsters.forEach(m => { m.hp = m.maxHp; m.isDead = false; m.shake = 0; });
   resetRoundState();
   stats.spins++;
 
-  // 強開：SPIN 開始時預先決定強制中獎的 payline 與符號
   forcedMult = 0;
   forceKeyTarget = 0;
   forceKeySpawned = 0;
-  if (forceSpinType !== null) {
-    forceLineRows = PAYLINES[2].slice();  // [2,2,2,2,2] 底列
-    forceLineSymbol = 4;                  // 戰場凶兆
-    if (forceSpinType === 'mult') {
-      // 預抽一個隨機倍數（全範圍），保證出現在中間欄（c=2）
-      const multOptions = [2,3,4,5,6,8,10,12,15,20,25,50,100,250,500,1000];
-      forcedMult = multOptions[Math.floor(Math.random() * multOptions.length)];
-    } else if (forceSpinType === 'fg_test') {
-      // FG 測試：有連線，50% 機率附帶倍數
-      if (Math.random() < 0.5) {
-        const fgMultOpts = [2, 3, 5, 10];
-        forcedMult = fgMultOpts[Math.floor(Math.random() * fgMultOpts.length)];
-      }
-    } else if (forceSpinType.startsWith('crown_') || forceSpinType.startsWith('necklace_')) {
-      forceKeyTarget = parseInt(forceSpinType.split('_')[1]) || 1;
-    } else if (forceSpinType.startsWith('key_')) {
-      const kidx = parseInt(forceSpinType[4]); // 0..2
-      forceKeyTarget = CHESTS[kidx] ? CHESTS[kidx].keys : 1;
-    }
-  } else if (inFG && fgAssistMode) {
-    // 強開厄倪俄進FG後，測試期間大多數局保留至少一條連線
-    if (Math.random() < 0.85) {
-      forceLineRows = PAYLINES[0].slice(); // [1,1,1,1,1] 中列
-      const fgLineSymbols = [0, 2, 4];
-      forceLineSymbol = fgLineSymbols[Math.floor(Math.random() * fgLineSymbols.length)];
-      // 倍數不是每局必出，但要有機會出現
-      if (Math.random() < 0.45) {
-        const fgMultOpts = [2, 3, 5, 10];
-        forcedMult = fgMultOpts[Math.floor(Math.random() * fgMultOpts.length)];
-      }
-    }
-  }
+  forceUsed = false;
+  forceLineRows = null;
+  forceLineRows2 = null;
+  forceLineSymbol = -1;
+
   winScore = 0;
   currentState = STATE.SPINNING;
 
@@ -616,9 +569,121 @@ function startSpin() {
     colSpinFrames[c] = SPIN_FRAMES[c];
     colBounce[c] = 0;
   }
+
+  if (isAutoSpinning) autoSpinDelay = AUTO_SPIN_DELAY;
 }
 
 const SPIN_SPEED = 18;
+
+function computeCurrentWays() {
+  // 估算目前盤面的總有效 Ways
+  let total = 0;
+  for (let symId = 0; symId < 8; symId++) {
+    const colorId = Math.floor(symId / 2);
+    const split = splitCount[colorId];
+    let ways = 1;
+    let valid = true;
+    for (let col = 0; col < COLS; col++) {
+      let count = 0;
+      for (let row = 0; row < ROWS; row++) {
+        const cell = board[col][row];
+        if (!cell.isMerged && cell.id === symId) count++;
+        else if (cell.isMerged && !cell.isMergeSlave) {
+          const cids = cell.colorId2 !== undefined ? [cell.colorId, cell.colorId2] : [cell.colorId];
+          if (cids.includes(colorId)) count++;
+        }
+      }
+      if (count === 0) { valid = false; break; }
+      ways *= count * split;
+    }
+    if (valid) total += ways;
+  }
+  return total || 1024;
+}
+
+// === 合成機制 ===
+function checkSynthesis() {
+  let found = false;
+
+  // ── Pass 1：掃描基礎合成（同色角色+武器水平相鄰 → 1×2）──
+  for (let row = 0; row < ROWS; row++) {
+    for (let col = 0; col < COLS - 1; col++) {
+      const a = board[col][row];
+      const b = board[col + 1][row];
+      // 跳過已合成格
+      if (a.isMerged || b.isMerged) continue;
+      if (a.id === undefined || a.id < 0) continue;
+      if (b.id === undefined || b.id < 0) continue;
+
+      const aColorId = Math.floor(a.id / 2);
+      const bColorId = Math.floor(b.id / 2);
+      const aIsChar  = (a.id % 2 === 0);
+      const bIsChar  = (b.id % 2 === 0);
+
+      // 同色 且 一個是角色、一個是武器
+      if (aColorId === bColorId && aIsChar !== bIsChar) {
+        const colorId = aColorId;
+
+        // 更新 splitCount
+        if (synthesizedColors.has(colorId)) {
+          splitCount[colorId]++;
+        } else {
+          splitCount[colorId] = 2;
+          synthesizedColors.add(colorId);
+        }
+
+        // 標記盤面格為合成格
+        const mergeId = mergedCells.length;
+        board[col][row]   = { id: -1, isMerged: true, mergeId, colorId, mergeSize: 2, mergeCol: col, mergeRow: row, isMergeSlave: false, isMatched: false, yOffset: 0, scale: 1 };
+        board[col+1][row] = { id: -1, isMerged: true, mergeId, colorId, mergeSize: 2, mergeCol: col, mergeRow: row, isMergeSlave: true,  isMatched: false, yOffset: 0, scale: 1 };
+
+        mergedCells.push({ col, row, colorId, size: 2 });
+        found = true;
+      }
+    }
+  }
+
+  // ── Pass 2：掃描進階合成（兩個相鄰 1×2 不同色 → 1×4）──
+  for (let i = 0; i < mergedCells.length; i++) {
+    const mA = mergedCells[i];
+    if (mA.size !== 2 || mA.upgraded) continue;
+    for (let j = i + 1; j < mergedCells.length; j++) {
+      const mB = mergedCells[j];
+      if (mB.size !== 2 || mB.upgraded) continue;
+      if (mA.row !== mB.row) continue;
+      if (mA.colorId === mB.colorId) continue;
+
+      // 相鄰：左邊合成符右緣緊接右邊合成符左緣
+      const leftM  = mA.col < mB.col ? mA : mB;
+      const rightM = mA.col < mB.col ? mB : mA;
+      if (leftM.col + 2 !== rightM.col) continue;
+
+      // 進階合成：兩色 splitCount 各 +1
+      splitCount[leftM.colorId]++;
+      splitCount[rightM.colorId]++;
+
+      const newMerge = { col: leftM.col, row: leftM.row, colorId: leftM.colorId, colorId2: rightM.colorId, size: 4 };
+      leftM.upgraded = true;
+      rightM.upgraded = true;
+      mergedCells.push(newMerge);
+
+      // 更新四個格為進階合成格
+      for (let c = leftM.col; c < leftM.col + 4; c++) {
+        board[c][leftM.row] = {
+          id: -1, isMerged: true, mergeId: mergedCells.length - 1,
+          colorId: leftM.colorId, colorId2: rightM.colorId,
+          mergeSize: 4, mergeCol: leftM.col, mergeRow: leftM.row,
+          isMergeSlave: (c !== leftM.col), isMatched: false, yOffset: 0, scale: 1
+        };
+      }
+      found = true;
+    }
+  }
+
+  // 過濾掉已升級為1×4的舊1×2記錄
+  mergedCells = mergedCells.filter(m => !m.upgraded);
+  return found;
+}
 
 function updateSpinning() {
   let allDone = true;
@@ -633,7 +698,7 @@ function updateSpinning() {
       if (colOffsets[c] >= CELL_SIZE) {
         colOffsets[c] -= CELL_SIZE;
         for (let r = ROWS - 1; r > 0; r--) board[c][r] = { ...board[c][r - 1] };
-        board[c][0] = { id: Math.floor(Math.random() * SYMBOLS.length), mult: rollCellMult(), yOffset: 0, isMatched: false, scale: 1, _flash: false };
+        board[c][0] = { id: Math.floor(Math.random() * SYMBOLS.length), yOffset: 0, isMatched: false, scale: 1 };
       }
       colSpinFrames[c]--;
       if (colSpinFrames[c] <= 0) {
@@ -642,14 +707,32 @@ function updateSpinning() {
         colBounce[c] = BOUNCE_AMPLITUDE;
         // 強開：列停止瞬間直接寫入目標符號，看起來就像自然停在那裡
         if (forceLineRows) {
-          // 倍數強開：中間欄（c=2）寫入預抽倍數，其他欄 mult=0
-          const isMultForce = (forceSpinType === 'mult' || forceSpinType === 'fg_test' || (inFG && fgAssistMode));
-          const cellMult = (isMultForce && c === 2 && !forceUsed) ? forcedMult : 0;
-          board[c][forceLineRows[c]] = { id: forceLineSymbol, mult: cellMult, yOffset: 0, isMatched: false, scale: 1, _flash: false };
-          if (isMultForce && c === 2) forceUsed = true;
+          board[c][forceLineRows[c]] = { id: forceLineSymbol, yOffset: 0, isMatched: false, scale: 1 };
         }
         if (forceLineRows2) {
-          board[c][forceLineRows2[c]] = { id: forceLineSymbol, mult: 0, yOffset: 0, isMatched: false, scale: 1, _flash: false };
+          board[c][forceLineRows2[c]] = { id: forceLineSymbol, yOffset: 0, isMatched: false, scale: 1 };
+        }
+        // 強開合成測試
+        if (forceSpinType === 'all_synth') {
+          if (c === 0) {
+            board[0][0] = { id: 0, yOffset: 0, isMatched: false, scale: 1 }; // 紅角色
+            board[0][1] = { id: 4, yOffset: 0, isMatched: false, scale: 1 }; // 藍角色
+          } else if (c === 1) {
+            board[1][0] = { id: 1, yOffset: 0, isMatched: false, scale: 1 }; // 紅武器
+            board[1][1] = { id: 5, yOffset: 0, isMatched: false, scale: 1 }; // 藍武器
+          } else if (c === 2) {
+            board[2][0] = { id: 2, yOffset: 0, isMatched: false, scale: 1 }; // 黃角色
+            board[2][1] = { id: 6, yOffset: 0, isMatched: false, scale: 1 }; // 綠角色
+          } else if (c === 3) {
+            board[3][0] = { id: 3, yOffset: 0, isMatched: false, scale: 1 }; // 黃武器
+            board[3][1] = { id: 7, yOffset: 0, isMatched: false, scale: 1 }; // 綠武器
+          }
+        } else if (forceSpinType === 'synth_0') {
+          if (c === 0) board[0][0] = { id: 0, yOffset: 0, isMatched: false, scale: 1 }; // 紅角色
+          else if (c === 1) board[1][0] = { id: 1, yOffset: 0, isMatched: false, scale: 1 }; // 紅武器
+        } else if (forceSpinType === 'synth_1') {
+          if (c === 0) board[0][0] = { id: 2, yOffset: 0, isMatched: false, scale: 1 }; // 黃角色
+          else if (c === 1) board[1][0] = { id: 3, yOffset: 0, isMatched: false, scale: 1 }; // 黃武器
         }
       }
     } else if (colStates[c] === 'stopping') {
@@ -661,181 +744,81 @@ function updateSpinning() {
     }
   }
 
-  if (allDone) currentState = STATE.CHECKING;
+  if (allDone) currentState = STATE.SYNTHESIS;
 }
 
 // === Payline 中獎檢查 ===
-function checkPaylines() {
+function calcWin() {
+  let totalWin = 0;
   winLines = [];
-  for (let li = 0; li < PAYLINES.length; li++) {
-    const line = PAYLINES[li];
-    const syms = line.map((row, col) => board[col][row].id);
 
-    let baseId = -1;
-    let count = 0;
+  for (let symId = 0; symId < 8; symId++) {
+    const colorId = Math.floor(symId / 2);
+    const split   = splitCount[colorId];
+
+    // 各列有效計數
+    const colCounts = [];
     for (let col = 0; col < COLS; col++) {
-      const s = syms[col];
-      if (s === WILD_ID) { count++; continue; }
-      if (baseId === -1) { baseId = s; count++; }
-      else if (s === baseId) { count++; }
-      else break;
+      let count = 0;
+      for (let row = 0; row < ROWS; row++) {
+        const cell = board[col][row];
+        if (!cell.isMerged && cell.id === symId) {
+          count++;
+        } else if (cell.isMerged && !cell.isMergeSlave) {
+          // 合成符替代同色的角色與武器
+          const cids = cell.colorId2 !== undefined
+            ? [cell.colorId, cell.colorId2]
+            : [cell.colorId];
+          if (cids.includes(colorId)) count++;
+        }
+      }
+      colCounts.push(count * split);
     }
 
-    if (baseId === -1 && count >= 3) baseId = 0;
-    if (baseId !== -1 && count >= 3) {
-      const cells = [];
-      for (let col = 0; col < COLS; col++) cells.push({ c: col, r: line[col] });
-      winLines.push({ lineIndex: li, symbolId: baseId, count, cells });
+    // 左→右連續列計 Ways
+    let matchCount = 0;
+    let ways = 1;
+    for (let col = 0; col < COLS; col++) {
+      if (colCounts[col] === 0) break;
+      matchCount++;
+      ways *= colCounts[col];
     }
-  }
 
-  if (winLines.length > 0) {
-    winLines.forEach(wl => {
-      wl.cells.slice(0, wl.count).forEach(({ c, r }) => { board[c][r].isMatched = true; });
-    });
-    comboCount++;
-    if (comboCount === 1) stats.hits++;
-
-    // 掃描本次中獎格的隱藏倍數，蒐集後於消除完成再依序飛出
-    pendingMultFlights = [];
-    const seen = new Set();
-    winLines.forEach(wl => {
-      wl.cells.slice(0, wl.count).forEach(({ c, r }) => {
-        const key = c * 10 + r;
-        if (!seen.has(key)) { seen.add(key);
-          if (board[c][r].mult > 0) {
-            pendingMultFlights.push({ value: board[c][r].mult, c, r });
+    if (matchCount >= 3) {
+      const rate = PAYOUTS[symId][matchCount - 3];
+      const symWin = Math.floor(betAmount * rate * ways);
+      totalWin += symWin;
+      // 標記中獎格（用於消除動畫）
+      for (let col = 0; col < matchCount; col++) {
+        for (let row = 0; row < ROWS; row++) {
+          const cell = board[col][row];
+          if (!cell.isMerged && cell.id === symId) {
+            cell.isMatched = true;
+          } else if (cell.isMerged && !cell.isMergeSlave) {
+            const cids = cell.colorId2 !== undefined
+              ? [cell.colorId, cell.colorId2]
+              : [cell.colorId];
+            if (cids.includes(colorId)) cell.isMatched = true;
           }
         }
-      });
-    });
-    pendingMultFlights.sort((a, b) => a.c !== b.c ? a.c - b.c : a.r - b.r);
-    multAppearedInPop = pendingMultFlights.length > 0;
-
-    let baseWin = 0;
-    winLines.forEach(wl => {
-      const payout = (PAYOUTS[wl.symbolId] && PAYOUTS[wl.symbolId][wl.count - 3]) || 0;
-      baseWin += betAmount * payout;
-    });
-    // 每次消除彩金均為基礎值（不乘倍數）；倍數於 endRound 統一結算
-    const thisWin = baseWin;
-    totalScore += thisWin;
-    // 記錄消除紀錄
-    if (thisWin > 0 || winLines.length > 0) {
-      const totalCells = winLines.reduce((s, wl) => s + wl.count, 0);
-      const symId = winLines.every(wl => wl.symbolId === winLines[0].symbolId) ? winLines[0].symbolId : -1;
-      winLog.unshift({ count: totalCells, symbolId: symId, amount: thisWin });
-      if (winLog.length > 6) winLog.pop();
+      }
+      winLines.push({ symId, matchCount, ways, win: symWin });
     }
-    // 中央得分數字停留後直接上收至得分欄
-    if (thisWin > 0) {
-      flyingScores.push({
-        value: thisWin,
-        x: GRID_X + GRID_W / 2, y: GRID_Y + GRID_H / 2 + 28,
-        tx: 640, ty: 96, progress: 0,
-        displayTimer: 35,               // 停留 35 幀後才開始飛
-        colorIdx: (comboCount - 1) % 5
-      });
-    }
-
-    popWaitTimer = WIN_DISPLAY_FRAMES;
-    currentState = STATE.SHOWING_WIN;
-
-    comboTexts.push({
-      lines: ['COMBO ' + comboCount], // 得分數字已在 flyingScores，此處只顯示 COMBO 標籤
-      life: 90,
-      alpha: 1
-    });
-  } else {
-    endRound();
   }
+
+  return totalWin;
 }
 
 function endRound() {
-  // 皇冠/項鍊 JP 結算（動畫播完後才繼續）
-  resolveCollectionJP();
-
   // 沖銷仍在飛行的分數，確保 winScore 完整
   flyingScores.forEach(fs => { winScore += fs.value; });
   flyingScores = [];
 
-  // 倍數結算：winScore × multiplier（僅在有得分 & 有累積倍數時）
-  function applyMultiplierToScore() {
-    if (multiplier > 1 && winScore > 0) {
-      const base = winScore;
-      const final = Math.floor(base * multiplier);
-      if (jpWinAnim.active) {
-        // JP 動畫播放中，等 JP 結束後再觸發
-        pendingMultToScoreApply = { base, final, mult: multiplier };
-      } else {
-        multToScoreAnim = {
-          active: true, phase: 'flying', timer: 0,
-          flyX: 132, flyY: 268, scoreShift: 0,
-          value: multiplier, baseScore: base, finalScore: final,
-        };
-      }
-    }
-  }
-
-  // ── FG 流程 ──
-  if (inFG) {
-    if (fgMultCollectedThisRound) applyMultiplierToScore();
-    fgSpinsLeft--;
-    resetRoundState();
-    currentState = STATE.IDLE;
-    if (fgSpinsLeft <= 0) {
-      inFG = false;
-      fgAssistMode = false;
-      showFGEndPanel = true;
-    } else {
-      autoSpinDelay = AUTO_SPIN_DELAY;
-    }
-    return;
-  }
-
-  // ── NG 流程 ──
-  const savedKeyCount = keyCount;
-  keyCount = 0;
-
-  let rewardIdx = -1;
-  let forceWasKey2 = false;
-
-  function pickRewardByKeyCount(cnt) {
-    for (let i = CHESTS.length - 1; i >= 0; i--) {
-      if (cnt >= CHESTS[i].keys) return i;
-    }
-    return -1;
-  }
-
-  if (forceSpinType && forceSpinType.startsWith('key_')) {
-    const forcedIdx = parseInt(forceSpinType[4]);
-    rewardIdx = forcedIdx; // 強開直接使用指定獎勵，不受號角數量門檻限制
-    forceWasKey2 = (forceSpinType === 'key_2');
-    forceSpinType = null; // 消費強開，後續連爆用自然隨機號角，不再強觸
-  } else {
-    rewardIdx = pickRewardByKeyCount(savedKeyCount);
-  }
-
-  // 號角重置後重新收集到門檻 → 可再次觸發；倍數等到確認無機制後才結算
-  const chestWillTrigger = rewardIdx >= 0;
-
-  if (chestWillTrigger) {
-    // 只有厄倪俄改為「先結算 NG 再觸發機制」
-    if (rewardIdx === 2) {
-      applyMultiplierToScore();
-      fgAssistMode = forceWasKey2;
-    }
-    pendingChestReward = rewardIdx;
-    chestUnlockAnim = { active: true, timer: 0, idx: pendingChestReward };
-  } else {
-    applyMultiplierToScore();
-    pendingChestReward = -1;
-  }
-
+  totalScore += winScore;
   resetRoundState();
   currentState = STATE.IDLE;
   if (isAutoSpinning) {
-    autoSpinDelay = AUTO_SPIN_DELAY + (savedKeyCount > 0 ? CHEST_UNLOCK_FRAMES : 0);
+    autoSpinDelay = AUTO_SPIN_DELAY;
   }
 }
 
@@ -866,32 +849,6 @@ function updateScoreTexts() {
   comboTexts = comboTexts.filter(t => { t.life--; return t.life > 0; });
 }
 
-function drawComboDisplay(ctx) {
-  if (comboTexts.length === 0) return;
-  const ct = comboTexts[comboTexts.length - 1];
-  if (!ct || ct.life <= 0) return;
-
-  ctx.save();
-  const fadeAlpha = Math.min(1, ct.life / 20);
-  ctx.globalAlpha = fadeAlpha;
-
-  const cx = GRID_X + GRID_W / 2;
-  const cy = GRID_Y + GRID_H / 2;
-
-  ctx.fillStyle = 'rgba(0,0,0,0.6)';
-  ctx.beginPath();
-  ctx.roundRect(cx - 200, cy - 70, 400, 145, 18);
-  ctx.fill();
-
-  ctx.fillStyle = '#a3e635';
-  ctx.font = 'bold 44px Arial';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(ct.lines[0], cx, cy - 30);
-
-  // 得分數字已在 flyingScores 顯示，此處只保留 COMBO 標籤
-  ctx.restore();
-}
 
 function drawScoreTexts(ctx) {
   scoreTexts.forEach(t => {
@@ -919,56 +876,13 @@ function updatePopping() {
     return;
   }
 
-  // Phase 2: 清除符號 → 進入 REVEALING
-  // 帶倍數格子：保留在盤面（_multWaiting=true），由 REVEALING Phase A 逐一處理
-  // 轉換為帶 (c,r) 的完整飛行佇列
-  multFlightSeq = pendingMultFlights.map(({ value, c, r }) => ({
-    value, c, r,
-    fx: GRID_X + c * CELL_SIZE + CELL_SIZE / 2,
-    fy: GRID_Y + r * CELL_SIZE + CELL_SIZE / 2
-  }));
-  multFlightIdx = 0;
-  multFlightTimer = 0;
-
-  const bottomRowSet = new Set();
+  // Phase 2: 清除符號 → 進入 GRAVITY
   winLines.forEach(wl => wl.cells.forEach(({ c, r }) => {
-    if (r === ROWS - 1) bottomRowSet.add(c);
     board[c][r] = { id: -1, mult: 0, yOffset: 0, isMatched: false, scale: 1, _flash: false };
   }));
-  _affectedCols = [...bottomRowSet];
-  spawnBottomSpecials(_affectedCols);
 
-  // 防止同格重疊：底列格同時帶倍數又分配到 KEY/WILD → 移除倍數（KEY/WILD 優先）
-  multFlightSeq = multFlightSeq.filter(mf =>
-    !(mf.r === ROWS - 1 &&
-      (bottomSpecial[mf.c] === SPECIAL.KEY || bottomSpecial[mf.c] === SPECIAL.WILD ||
-       bottomSpecial[mf.c] === SPECIAL.CROWN || bottomSpecial[mf.c] === SPECIAL.NECKLACE))
-  );
-
-  // 建立統一觸發序列（倍數 + KEY + WILD 合併，按 c 再按 r 排序）
-  const items = [];
-  for (const mf of multFlightSeq) {
-    items.push({ type: 'mult', c: mf.c, r: mf.r, fx: mf.fx, fy: mf.fy, value: mf.value });
-  }
-  for (let c = 0; c < COLS; c++) {
-    const sp = bottomSpecial[c];
-    if (sp === SPECIAL.KEY || sp === SPECIAL.WILD || sp === SPECIAL.CROWN || sp === SPECIAL.NECKLACE) {
-      let type = 'wild';
-      if (sp === SPECIAL.KEY) type = 'key';
-      else if (sp === SPECIAL.CROWN) type = 'crown';
-      else if (sp === SPECIAL.NECKLACE) type = 'necklace';
-      items.push({ type, c, r: ROWS - 1,
-                   fx: GRID_X + c * CELL_SIZE + CELL_SIZE / 2,
-                   fy: GRID_Y + (ROWS - 1) * CELL_SIZE + CELL_SIZE / 2 });
-    }
-  }
-  items.sort((a, b) => a.c !== b.c ? a.c - b.c : a.r - b.r);
-  unifiedRevealSeq = items;
-  unifiedRevealIdx = 0;
-  unifiedRevealTimer = 0;
-
-  popWaitTimer = 0;
-  currentState = STATE.REVEALING;
+  applyGravity();
+  currentState = STATE.GRAVITY;
 }
 
 const MAX_PARTICLES = 500;
@@ -1050,7 +964,7 @@ function updateGravity() {
     }
   }
   if (!settling) {
-    currentState = STATE.CHECKING;
+    currentState = STATE.SYNTHESIS;
   }
 }
 
@@ -1064,157 +978,12 @@ const SPECIAL_WEIGHTS = [
 ];
 const SPECIAL_WEIGHTS_TOTAL = SPECIAL_WEIGHTS.reduce((s, e) => s + e.w, 0);
 
-function spawnBottomSpecials(affectedCols) {
-  affectedCols.forEach(c => {
-    let rand = Math.random() * SPECIAL_WEIGHTS_TOTAL;
-    let chosen = SPECIAL.NONE;
-    for (const { type, w } of SPECIAL_WEIGHTS) { rand -= w; if (rand <= 0) { chosen = type; break; } }
-    // 強開覆蓋（KEY/WILD 才在底部特殊格處理；倍數已在 cell.mult 處理）
-    if (forceSpinType && forceSpinType !== 'mult') {
-      if (!forceUsed) {
-        if (forceSpinType === 'wild') {
-          chosen = SPECIAL.WILD; forceUsed = true;
-        } else if (forceSpinType === 'key') {
-          chosen = SPECIAL.KEY; forceUsed = true;
-        } else if (forceSpinType.startsWith('crown_')) {
-          if (forceKeySpawned < forceKeyTarget) {
-            chosen = SPECIAL.CROWN;
-            forceKeySpawned++;
-            if (forceKeySpawned >= forceKeyTarget) forceUsed = true;
-          }
-        } else if (forceSpinType.startsWith('necklace_')) {
-          if (forceKeySpawned < forceKeyTarget) {
-            chosen = SPECIAL.NECKLACE;
-            forceKeySpawned++;
-            if (forceKeySpawned >= forceKeyTarget) forceUsed = true;
-          }
-        } else if (forceSpinType.startsWith('key_')) {
-          if (forceKeySpawned < forceKeyTarget) {
-            chosen = SPECIAL.KEY;
-            forceKeySpawned++;
-            if (forceKeySpawned >= forceKeyTarget) forceUsed = true;
-          }
-        }
-      } else if (forceSpinType.startsWith('crown_')) {
-        if (chosen === SPECIAL.CROWN) chosen = SPECIAL.NONE;
-      } else if (forceSpinType.startsWith('necklace_')) {
-        if (chosen === SPECIAL.NECKLACE) chosen = SPECIAL.NONE;
-      } else if (forceSpinType.startsWith('key_')) {
-        // 已達目標數量：禁止隨機再出現 KEY，確保精確數量
-        if (chosen === SPECIAL.KEY) chosen = SPECIAL.NONE;
-      }
-    }
-    if (inFG && (chosen === SPECIAL.KEY || chosen === SPECIAL.CROWN || chosen === SPECIAL.NECKLACE)) chosen = SPECIAL.NONE; // FG 不出號角/皇冠/項鍊
-    bottomSpecial[c] = chosen;
-    bottomSpecialAnim[c] = chosen !== SPECIAL.NONE ? 1 : 0;
-    // KEY / WILD 與倍數不共存：清掉底列該格的隱藏倍數
-    if ((chosen === SPECIAL.KEY || chosen === SPECIAL.WILD || chosen === SPECIAL.CROWN || chosen === SPECIAL.NECKLACE) && board[c] && board[c][ROWS - 1]) {
-      board[c][ROWS - 1].mult = 0;
-    }
-  });
 
-  revealSeq = [...affectedCols].filter(c => bottomSpecial[c] !== SPECIAL.NONE).sort((a, b) => a - b);
-  revealSeqIdx = 0;
-  revealColTimer = 0;
-
-}
-
-function drawBottomSpecials(ctx) {
-  for (let c = 0; c < COLS; c++) {
-    const sp = bottomSpecial[c];
-    // REVEALING 期間由 drawRevealOverlay 統一處理 KEY/WILD 顯示
-    if (currentState === STATE.REVEALING && (sp === SPECIAL.KEY || sp === SPECIAL.WILD || sp === SPECIAL.CROWN || sp === SPECIAL.NECKLACE)) continue;
-    if (sp === SPECIAL.NONE || sp === PROCESSED) continue;
-
-    const anim = bottomSpecialAnim[c];
-    const x = GRID_X + c * CELL_SIZE + 4;
-    const y = GRID_Y + (ROWS - 1) * CELL_SIZE + 4;
-    const w = CELL_SIZE - 8;
-    const h = CELL_SIZE - 8;
-
-    // hold 階段加強脈衝（用統一序列判斷）
-    const cur = unifiedRevealSeq[unifiedRevealIdx];
-    const isHolding = (currentState === STATE.REVEALING &&
-                       cur && (cur.type === 'key' || cur.type === 'wild' || cur.type === 'crown' || cur.type === 'necklace') &&
-                       cur.c === c && unifiedRevealTimer < cur.holdFrames);
-    const pulse = isHolding ? (0.8 + 0.2 * Math.sin(Date.now() / 110)) : 1;
-
-    ctx.save();
-    ctx.globalAlpha = anim;
-    ctx.shadowColor = '#ffd700';
-    ctx.shadowBlur = (isHolding ? 22 : 16) * pulse * anim;
-    ctx.strokeStyle = '#ffd700';
-    ctx.lineWidth = isHolding ? 4 : 3;
-    ctx.beginPath();
-    ctx.roundRect(x, y, w, h, 8);
-    ctx.stroke();
-    ctx.shadowBlur = 0;
-
-    let label = '';
-    let textColor = '#ffd700';
-    if (sp === SPECIAL.KEY)      { label = '📯'; textColor = '#fde68a'; }
-    else if (sp === SPECIAL.WILD)     { label = 'W'; }
-    else if (sp === SPECIAL.CROWN)    { label = '👑'; textColor = '#facc15'; }
-    else if (sp === SPECIAL.NECKLACE) { label = '📿'; textColor = '#f472b6'; }
-
-    ctx.fillStyle = textColor;
-    ctx.font = `bold ${sp === SPECIAL.KEY ? 32 : 28}px Arial`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(label, x + w / 2, y + h / 2);
-    ctx.restore();
-  }
-}
 
 // 每個特殊格的演繹節奏（幀數）：消除後立即全部可見，依序觸發
 const REVEAL_HOLD_FRAMES2 = 45;  // 觸發前停留（讓玩家看清楚）
 const REVEAL_AFTER_FRAMES = 22;  // 效果發動後緩衝
 
-function updateRevealing() {
-  if (unifiedRevealSeq.length === 0) {
-    // 無任何機制觸發，直接落下
-    if (flyingMultipliers.some(f => f.progress < 1)) return;
-    if (flyingAttacks.some(k => k.progress < 1)) return;
-    applyGravity(); currentState = STATE.GRAVITY; return;
-  }
-
-  unifiedRevealTimer++;
-
-  // ── Phase 1：全局停留（所有指示器同時顯示）──
-  if (unifiedRevealTimer <= UNIFIED_HOLD_FRAMES) return;
-
-  // ── Phase 2：依序飛出（每隔 FIRE_INTERVAL 幀觸發一個）──
-  const fireTime = UNIFIED_HOLD_FRAMES + unifiedRevealIdx * FIRE_INTERVAL;
-  if (unifiedRevealTimer <= fireTime) return;   // 等待輪到目前這個
-
-  if (unifiedRevealIdx < unifiedRevealSeq.length) {
-    const item = unifiedRevealSeq[unifiedRevealIdx];
-    if (item.type === 'mult') {
-      flyingMultipliers.push({ value: item.value, x: item.fx, y: item.fy,
-        tx: 132, ty: 268, progress: 0 }); // 飛向左側倍數欄位
-    } else if (item.type === 'key') {
-      collectKey(item.fx, item.fy);
-      bottomSpecial[item.c] = PROCESSED;
-    } else if (item.type === 'crown') {
-      collectCrown(item.fx, item.fy);
-      bottomSpecial[item.c] = PROCESSED;
-    } else if (item.type === 'necklace') {
-      collectNecklace(item.fx, item.fy);
-      bottomSpecial[item.c] = PROCESSED;
-    } else if (item.type === 'wild') {
-      board[item.c][ROWS - 1] = { id: WILD_ID, mult: 0, yOffset: 0,
-        isMatched: false, scale: 1, _flash: false };
-      bottomSpecial[item.c] = PROCESSED;
-    }
-    unifiedRevealIdx++;
-    return;
-  }
-
-  // 全部發動完畢，等飛行動畫落地
-  if (flyingMultipliers.some(f => f.progress < 1)) return;
-  if (flyingAttacks.some(k => k.progress < 1)) return;
-  applyGravity(); currentState = STATE.GRAVITY;
-}
 
 // === JP 顯示條（倍數欄位左右兩側）===
 function drawJPBars(ctx) {
@@ -1261,23 +1030,20 @@ function drawJPBars(ctx) {
     ctx.fillText(value, bx + bw / 2, by + bh - 5);
     ctx.restore();
   });
+
+  // Ways 數顯示
+  const currentWays = computeCurrentWays();
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.beginPath();
+  ctx.roundRect(GRID_X + GRID_W / 2 - 64, GRID_Y - 30, 128, 26, 6);
+  ctx.fill();
+  ctx.fillStyle = '#ffd700';
+  ctx.font = 'bold 14px Arial';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(`${currentWays} WAYS`, GRID_X + GRID_W / 2, GRID_Y - 17);
 }
 
-// === Task 10：倍數欄位 ===
-function updateFlyingMultipliers() {
-  flyingMultipliers = flyingMultipliers.filter(fm => {
-    fm.x += (fm.tx - fm.x) * 0.08;
-    fm.y += (fm.ty - fm.y) * 0.08;
-    fm.progress = Math.min(1, fm.progress + 0.025);
-    if (fm.progress >= 1) {
-      // 原本的 X1 不算基底：第一個倍數直接設為該值，後續才累加
-      multiplier = (multiplier === 1 ? 0 : multiplier) + fm.value;
-      if (inFG) fgMultCollectedThisRound = true;
-      return false;
-    }
-    return true;
-  });
-}
 
 // ── 得分累積欄位（頂部，取代原倍數欄位位置）──
 function drawScoreAccumulator(ctx) {
@@ -1300,14 +1066,11 @@ function drawScoreAccumulator(ctx) {
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillStyle = '#64748b'; ctx.font = '11px Arial';
   ctx.fillText('得分', bx + bw / 2, by + 9);
-  // 動畫期間由 drawMultToScoreAnim 負責繪製數字
-  if (!multToScoreAnim.active) {
-    ctx.fillStyle = hasWin ? '#facc15' : '#475569';
-    ctx.font = `bold ${hasWin ? 22 : 20}px Arial`;
-    if (hasWin) { ctx.shadowColor = '#facc15'; ctx.shadowBlur = 8 * pulse; }
-    ctx.fillText(winScore.toLocaleString(), bx + bw / 2, by + bh / 2 + 5);
-    ctx.shadowBlur = 0;
-  }
+  ctx.fillStyle = hasWin ? '#facc15' : '#475569';
+  ctx.font = `bold ${hasWin ? 22 : 20}px Arial`;
+  if (hasWin) { ctx.shadowColor = '#facc15'; ctx.shadowBlur = 8 * pulse; }
+  ctx.fillText(winScore.toLocaleString(), bx + bw / 2, by + bh / 2 + 5);
+  ctx.shadowBlur = 0;
   ctx.restore();
 }
 
@@ -1346,32 +1109,6 @@ function drawJPPanel(ctx) {
   ctx.restore();
 }
 
-// ── 倍數欄位（移至 JP 面板下方）──
-function drawMultiplierBar(ctx) {
-  const bx = 5, by = 236, bw = 255, bh = 64;
-  const isActive = multiplier > 1;
-  const pulse = isActive ? 0.7 + 0.3 * Math.sin(Date.now() / 180) : 1;
-
-  ctx.save();
-  ctx.fillStyle = 'rgba(0,0,0,0.65)';
-  ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 10); ctx.fill();
-
-  ctx.strokeStyle = isActive ? '#ffd700' : '#334155';
-  ctx.lineWidth = isActive ? 2.5 : 1;
-  if (isActive) { ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 14 * pulse; }
-  ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 10); ctx.stroke();
-  ctx.shadowBlur = 0;
-
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillStyle = '#64748b'; ctx.font = '11px Arial';
-  ctx.fillText('倍數', bx + bw / 2, by + 12);
-  ctx.fillStyle = isActive ? '#ffd700' : '#475569';
-  ctx.font = `bold ${isActive ? 30 : 26}px Arial`;
-  if (isActive) { ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 12 * pulse; }
-  ctx.fillText('× ' + multiplier, bx + bw / 2, by + bh / 2 + 7);
-  ctx.shadowBlur = 0;
-  ctx.restore();
-}
 
 // ── 連線消除紀錄面板 ──
 function drawWinLog(ctx) {
@@ -1450,685 +1187,16 @@ function drawFlyingScores(ctx) {
   });
 }
 
-// ── 倍數飛向得分欄（endRound 結算用）──
-const _MULT_CX = 640, _MULT_CY = 96; // 得分欄中心
-function updateMultToScoreAnim() {
-  if (!multToScoreAnim.active) return;
-  const m = multToScoreAnim;
-  m.timer++;
 
-  if (m.phase === 'flying') {
-    const targetX = _MULT_CX + 90, targetY = _MULT_CY;
-    m.flyX += (targetX - m.flyX) * 0.14;
-    m.flyY += (targetY - m.flyY) * 0.14;
-    // 線性平移：35幀內從0移到-45
-    m.scoreShift = -45 * Math.min(1, m.timer / 35);
-    const dx = targetX - m.flyX, dy = targetY - m.flyY;
-    if (m.timer >= 35 || (dx*dx + dy*dy) < 25) {
-      m.phase = 'formula';
-      m.timer = 0;
-      m.flyX = targetX; m.flyY = targetY;
-      m.scoreShift = -45;
-    }
-    return;
-  }
 
-  if (m.phase === 'formula') {
-    m.scoreShift = -45;
-    if (m.timer >= 62) { m.phase = 'combine'; m.timer = 0; }
-    return;
-  }
 
-  if (m.phase === 'combine') {
-    if (m.timer === 1) {
-      // 套用倍數得分
-      const bonus = m.finalScore - m.baseScore;
-      totalScore += bonus;
-      winScore = m.finalScore;
-    }
-    m.flyX += (_MULT_CX - m.flyX) * 0.18;
-    // 線性回位：28幀內從-45回到0
-    m.scoreShift = -45 * Math.max(0, 1 - m.timer / 28);
-    if (m.timer >= 28) { m.phase = 'settle'; m.timer = 0; }
-    return;
-  }
 
-  if (m.phase === 'settle') {
-    if (m.timer >= 22) { m.active = false; m.phase = 'idle'; }
-  }
-}
 
-function updateErisMultiplierAnim() {
-  if (!erisMultiplierAnim.active) return;
 
-  erisMultiplierAnim.timer++;
 
-  if (erisMultiplierAnim.phase === 'intro') {
-    if (erisMultiplierAnim.timer >= 26) {
-      erisMultiplierAnim.phase = 'rolling';
-      erisMultiplierAnim.timer = 0;
-      erisMultiplierAnim.displayFactor = [2, 3, 5, 10][Math.floor(Math.random() * 4)];
-    }
-    return;
-  }
 
-  if (erisMultiplierAnim.phase === 'rolling') {
-    // 由小到大依序跑：前段快、後段慢
-    const step = Math.min(10, 2 + Math.floor(erisMultiplierAnim.timer / 8));
-    if (erisMultiplierAnim.timer % step === 0) {
-      const opts = [2, 3, 5, 10];
-      erisMultiplierAnim.rollIdx = (erisMultiplierAnim.rollIdx + 1) % opts.length;
-      erisMultiplierAnim.displayFactor = opts[erisMultiplierAnim.rollIdx];
-    }
-    if (erisMultiplierAnim.timer >= 62) {
-      erisMultiplierAnim.displayFactor = erisMultiplierAnim.picked;
-      erisMultiplierAnim.phase = 'settle';
-      erisMultiplierAnim.timer = 0;
-    }
-    return;
-  }
 
-  if (erisMultiplierAnim.phase === 'settle') {
-    // 停下後亮一下，再飛往倍數欄
-    if (erisMultiplierAnim.timer >= 22) {
-      erisMultiplierAnim.phase = 'fly';
-      erisMultiplierAnim.timer = 0;
-      erisMultiplierAnim.flyX = 640;
-      erisMultiplierAnim.flyY = 332;
-    }
-    return;
-  }
 
-  if (erisMultiplierAnim.phase === 'fly') {
-    erisMultiplierAnim.flyX += (erisMultiplierAnim.tx - erisMultiplierAnim.flyX) * 0.16;
-    erisMultiplierAnim.flyY += (erisMultiplierAnim.ty - erisMultiplierAnim.flyY) * 0.16;
-
-    const dx = erisMultiplierAnim.tx - erisMultiplierAnim.flyX;
-    const dy = erisMultiplierAnim.ty - erisMultiplierAnim.flyY;
-    if (erisMultiplierAnim.timer >= 40 || (dx * dx + dy * dy) < 16) {
-      multiplier = erisMultiplierAnim.targetMultiplier;
-      const bonus = Math.floor(winScore * (erisMultiplierAnim.picked - 1));
-      winScore += bonus;
-      totalScore += bonus;
-      erisMultiplierAnim.phase = 'land';
-      erisMultiplierAnim.timer = 0;
-    }
-    return;
-  }
-
-  if (erisMultiplierAnim.phase === 'land') {
-    if (erisMultiplierAnim.timer >= 18) {
-      erisMultiplierAnim.phase = 'announce';
-      erisMultiplierAnim.timer = 0;
-    }
-  }
-
-  if (erisMultiplierAnim.phase === 'announce') {
-    if (erisMultiplierAnim.timer >= 75) {
-      erisMultiplierAnim.active = false;
-      erisMultiplierAnim.phase = 'idle';
-      rewardClearAllBoard();
-    }
-  }
-}
-
-function drawMultToScoreAnim(ctx) {
-  if (!multToScoreAnim.active) return;
-  const m = multToScoreAnim;
-  const cx = _MULT_CX, cy = _MULT_CY;
-  ctx.save();
-
-  if (m.phase === 'flying') {
-    // 得分數字左移
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#facc15'; ctx.font = 'bold 22px Arial';
-    ctx.shadowColor = '#facc15'; ctx.shadowBlur = 8;
-    ctx.fillText(m.baseScore.toLocaleString(), cx + m.scoreShift, cy);
-    ctx.shadowBlur = 0;
-    // 飛行中的 ×N
-    ctx.fillStyle = '#ffd700'; ctx.font = 'bold 26px Arial';
-    ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 14;
-    ctx.fillText('×' + m.value, m.flyX, m.flyY);
-    ctx.shadowBlur = 0;
-
-  } else if (m.phase === 'formula') {
-    const pulse = 0.85 + 0.15 * Math.sin(Date.now() / 140);
-    // 得分左側
-    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#facc15'; ctx.font = 'bold 24px Arial';
-    ctx.shadowColor = '#facc15'; ctx.shadowBlur = 8;
-    ctx.fillText(m.baseScore.toLocaleString(), cx - 14, cy);
-    ctx.shadowBlur = 0;
-    // × 符號
-    ctx.textAlign = 'center';
-    ctx.fillStyle = '#94a3b8'; ctx.font = 'bold 20px Arial';
-    ctx.fillText('×', cx + 14, cy);
-    // 倍數右側（脈衝發光）
-    ctx.textAlign = 'left';
-    ctx.fillStyle = '#ffd700'; ctx.font = `bold ${Math.floor(22 + 4 * pulse)}px Arial`;
-    ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 16 * pulse;
-    ctx.fillText(m.value, cx + 30, cy);
-    ctx.shadowBlur = 0;
-
-  } else if (m.phase === 'combine') {
-    const t = m.timer / 28;
-    const pulse = 1 + 0.25 * Math.sin(t * Math.PI);
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#facc15';
-    ctx.font = `bold ${Math.floor(22 * pulse)}px Arial`;
-    ctx.shadowColor = '#facc15'; ctx.shadowBlur = 18 * pulse;
-    ctx.fillText(m.finalScore.toLocaleString(), cx, cy);
-    ctx.shadowBlur = 0;
-
-  } else if (m.phase === 'settle') {
-    const alpha = 1 - m.timer / 22;
-    ctx.globalAlpha = Math.max(0, alpha);
-    const pulse = 1 + 0.12 * Math.sin(m.timer * 0.6);
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#facc15';
-    ctx.font = `bold ${Math.floor(24 * pulse)}px Arial`;
-    ctx.shadowColor = '#facc15'; ctx.shadowBlur = 14;
-    ctx.fillText(m.finalScore.toLocaleString(), cx, cy);
-    ctx.shadowBlur = 0;
-  }
-
-  ctx.restore();
-}
-
-function drawErisMultiplierAnim(ctx) {
-  if (!erisMultiplierAnim.active) return;
-
-  const p = erisMultiplierAnim;
-  const cx = 640, cy = 332;
-
-  if (p.phase === 'land') {
-    const pulse = 0.75 + 0.25 * Math.sin(Date.now() / 95);
-    ctx.save();
-    ctx.globalAlpha = 0.95;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#f8fafc';
-    ctx.font = `bold ${Math.floor(26 + 6 * pulse)}px Arial`;
-    ctx.shadowColor = '#f8fafc';
-    ctx.shadowBlur = 12 * pulse;
-    ctx.fillText('🍎', p.tx, p.ty - 12);
-    ctx.shadowBlur = 0;
-    ctx.restore();
-    return;
-  }
-
-  if (p.phase === 'announce') {
-    const t = p.timer / 75;
-    const alpha = t < 0.15 ? t / 0.15 : t > 0.75 ? (1 - t) / 0.25 : 1;
-    const pulse = 0.85 + 0.15 * Math.sin(Date.now() / 120);
-    ctx.save();
-    ctx.globalAlpha = alpha;
-    // 壓暗背景
-    ctx.fillStyle = 'rgba(0,0,8,0.62)';
-    ctx.fillRect(0, 0, 1280, 720);
-    // 文字背景框
-    ctx.fillStyle = 'rgba(15,23,42,0.92)';
-    ctx.beginPath(); ctx.roundRect(cx - 260, cy - 50, 520, 100, 16); ctx.fill();
-    ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 2.5;
-    ctx.shadowColor = '#ef4444'; ctx.shadowBlur = 18 * pulse;
-    ctx.beginPath(); ctx.roundRect(cx - 260, cy - 50, 520, 100, 16); ctx.stroke();
-    ctx.shadowBlur = 0;
-    // 文字
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#fef2f2';
-    ctx.font = `bold ${Math.floor(30 + 4 * pulse)}px Arial`;
-    ctx.shadowColor = '#ef4444'; ctx.shadowBlur = 14 * pulse;
-    ctx.fillText('🍎 觸發全盤消除！', cx, cy);
-    ctx.shadowBlur = 0;
-    ctx.restore();
-    return;
-  }
-
-  ctx.save();
-  ctx.fillStyle = 'rgba(0,0,0,0.45)';
-  ctx.fillRect(0, 0, 1280, 720);
-
-  if (p.phase !== 'fly') {
-    const pulse = 0.7 + 0.3 * Math.sin(Date.now() / 130);
-    ctx.fillStyle = 'rgba(15,23,42,0.92)';
-    ctx.beginPath();
-    ctx.roundRect(cx - 250, cy - 110, 500, 190, 18);
-    ctx.fill();
-    ctx.strokeStyle = '#94a3b8';
-    ctx.lineWidth = 2;
-    ctx.shadowColor = '#94a3b8';
-    ctx.shadowBlur = 12 * pulse;
-    ctx.beginPath();
-    ctx.roundRect(cx - 250, cy - 110, 500, 190, 18);
-    ctx.stroke();
-    ctx.shadowBlur = 0;
-
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#f8fafc';
-    ctx.font = '54px Arial';
-    ctx.fillText('🍎', cx, cy - 40);
-    ctx.fillStyle = '#e2e8f0';
-    ctx.font = 'bold 22px Arial';
-    ctx.fillText('厄里斯之力', cx, cy + 8);
-    ctx.fillStyle = '#f8fafc';
-    const lockPulse = (p.phase === 'settle') ? (0.75 + 0.25 * Math.sin(Date.now() / 90)) : 1;
-    ctx.font = `bold ${Math.floor(38 + (p.phase === 'settle' ? 6 * lockPulse : 0))}px Arial`;
-    ctx.shadowColor = '#e2e8f0';
-    ctx.shadowBlur = (p.phase === 'settle') ? 22 : 14;
-    ctx.fillText('× ' + p.displayFactor, cx, cy + 60);
-    ctx.shadowBlur = 0;
-  }
-
-  const ix = (p.phase === 'fly') ? p.flyX : cx;
-  const iy = (p.phase === 'fly') ? p.flyY : cy - 40;
-  const flyPulse = 0.75 + 0.25 * Math.sin(Date.now() / 120);
-  ctx.font = '48px Arial';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.globalAlpha = 0.98;
-  ctx.fillStyle = '#f8fafc';
-  ctx.shadowColor = '#94a3b8';
-  ctx.shadowBlur = 12 * flyPulse;
-  ctx.fillText('🍎', ix, iy);
-  ctx.shadowBlur = 0;
-
-  if (p.phase === 'fly') {
-    ctx.fillStyle = '#f8fafc';
-    ctx.font = 'bold 26px Arial';
-    ctx.fillText('× ' + p.picked, ix, iy + 36);
-  }
-  ctx.restore();
-}
-
-function drawFlyingMultipliers(ctx) {
-  flyingMultipliers.forEach(fm => {
-    ctx.save();
-    ctx.globalAlpha = 0.9;
-    ctx.fillStyle = '#ffd700';
-    ctx.font = 'bold 22px Arial';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.shadowColor = '#ffd700';
-    ctx.shadowBlur = 10;
-    ctx.fillText(fm.value + 'x', fm.x, fm.y);
-    ctx.shadowBlur = 0;
-    ctx.restore();
-  });
-}
-
-// === 怪獸初始化 ===
-function initMonsters() {
-  monsters = [
-    { side: 'left',  name: '宙斯', hp: 4, maxHp: 4, isJP: true, jackpot: 99999,  color: '#facc15', icon: '⚡', shake: 0, isDead: false },
-    { side: 'right', name: '赫拉', hp: 4, maxHp: 4, isJP: true, jackpot: 888888, color: '#ec4899', icon: '👑', shake: 0, isDead: false },
-  ];
-}
-
-// 號角飛向右側收集欄中心
-function collectKey(fromX, fromY) {
-  // 目標：右側寶箱欄中央
-  const tx = 1147;
-  const ty = GRID_Y + GRID_H / 2;
-  flyingAttacks.push({ x: fromX, y: fromY, tx, ty, progress: 0, isKey: true });
-}
-
-function collectCrown(fromX, fromY) {
-  // 目標：左側宙斯卡片
-  flyingAttacks.push({ x: fromX, y: fromY, tx: 130, ty: 99, progress: 0, isCrown: true });
-}
-
-function collectNecklace(fromX, fromY) {
-  // 目標：右側赫拉卡片
-  flyingAttacks.push({ x: fromX, y: fromY, tx: 1147, ty: 99, progress: 0, isNecklace: true });
-}
-
-// JP 等級表：count → { label, value, hue }
-function getCollectionJPTier(count, isCrown) {
-  if (count <= 0) return null;
-  if (count >= 4) {
-    if (isCrown) {
-      const m = monsters.find(b => b.name === '宙斯');
-      return { label: '⚡ 宙斯', value: m ? m.jackpot : 99999, hue: 45 };
-    } else {
-      const m = monsters.find(b => b.name === '赫拉');
-      return { label: '👑 赫拉', value: m ? m.jackpot : 888888, hue: 300 };
-    }
-  }
-  if (count === 3) return { label: 'MAJOR',  value: 75 * betAmount, hue: 15  };
-  if (count === 2) return { label: 'MINOR',  value: 10 * betAmount, hue: 210 };
-  if (count === 1) return { label: 'MINI',   value:  5 * betAmount, hue: 60  };
-  return null;
-}
-
-function startNextJP() {
-  if (jpWinQueue.length === 0) return;
-  const { label, value, hue } = jpWinQueue.shift();
-  totalScore += value;
-  jpWinAnim = { active: true, timer: 300, monsterName: label, value };
-  for (let i = 0; i < 70; i++) {
-    const ang = Math.random() * Math.PI * 2, spd = 4 + Math.random() * 8;
-    jpWinParticles.push({ x: 640, y: 360, vx: Math.cos(ang)*spd, vy: Math.sin(ang)*spd,
-      life: 160, maxLife: 160,
-      color: 'hsl(' + (hue + Math.floor(Math.random()*40 - 20)) + ',95%,65%)',
-      size: 5 + Math.random() * 6 });
-  }
-}
-
-// 結算本局皇冠/項鍊 JP，加入佇列
-function resolveCollectionJP() {
-  const crownTier    = getCollectionJPTier(crownCount,    true);
-  const necklaceTier = getCollectionJPTier(necklaceCount, false);
-  if (crownTier)    jpWinQueue.push(crownTier);
-  if (necklaceTier) jpWinQueue.push(necklaceTier);
-  if (!jpWinAnim.active) startNextJP();
-}
-
-// 兩張一樣大的 Boss 卡（無血量）
-// 宙斯：左側面板；赫拉：右側收集欄上方
-function drawBossCards(ctx) {
-  if (inFG) return;
-  const BW = 255, BH = 86; // 兩張完全一致的尺寸
-  const BOSS_DEF = [
-    { name: '宙斯', bx: 5,    by: 56 },
-    { name: '赫拉', bx: 1022, by: 56 },
-  ];
-  BOSS_DEF.forEach(({ name, bx, by }) => {
-    const m = monsters.find(b => b.name === name);
-    if (!m) return;
-    ctx.save();
-
-    // 背景
-    ctx.fillStyle = '#0f172a';
-    ctx.beginPath(); ctx.roundRect(bx, by, BW, BH, 12); ctx.fill();
-
-    // 收集進度與解鎖狀態
-    const collectCount = name === '宙斯' ? crownCount : necklaceCount;
-    const collectIcon  = name === '宙斯' ? '👑' : '📿';
-    const bossUnlocked = collectCount >= 3;
-    const bPulse = bossUnlocked ? 0.6 + 0.4 * Math.sin(Date.now() / 180) : 1;
-    ctx.strokeStyle = m.color;
-    ctx.lineWidth = bossUnlocked ? 3 : 2;
-    ctx.shadowColor = m.color; ctx.shadowBlur = bossUnlocked ? 22 * bPulse : 10;
-    ctx.beginPath(); ctx.roundRect(bx, by, BW, BH, 12); ctx.stroke();
-    ctx.shadowBlur = 0;
-
-    // 大圖示（左側圓形底）
-    ctx.fillStyle = m.color + '22';
-    ctx.beginPath(); ctx.arc(bx + 40, by + BH/2, 32, 0, Math.PI*2); ctx.fill();
-    ctx.font = '36px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(m.icon, bx + 40, by + BH/2 + 2);
-
-    // 名稱
-    ctx.fillStyle = '#fbbf24'; ctx.font = 'bold 17px Arial';
-    ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-    ctx.fillText(name, bx + 82, by + 10);
-
-    // JP 金額
-    ctx.fillStyle = '#fde68a'; ctx.font = 'bold 13px Arial';
-    ctx.fillText('JP  ' + m.jackpot.toLocaleString(), bx + 82, by + 32);
-
-    // 收集進度點（4 顆）與 JP 等級標籤
-    const tierLabels = ['MINI', 'MINOR', 'MAJOR', name === '宙斯' ? '⚡JP' : '👑JP'];
-    for (let d = 0; d < 4; d++) {
-      const dotX = bx + 82 + d * 42;
-      const dotY = by + 56;
-      const filled = d < collectCount;
-      ctx.fillStyle = filled ? m.color : '#1e293b';
-      ctx.strokeStyle = filled ? m.color : '#334155';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.arc(dotX, dotY, 9, 0, Math.PI*2);
-      ctx.fill(); ctx.stroke();
-      if (filled) {
-        ctx.font = '11px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillStyle = '#0f172a';
-        ctx.fillText(collectIcon, dotX, dotY);
-      }
-      ctx.font = '8px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-      ctx.fillStyle = filled ? m.color : '#475569';
-      ctx.fillText(tierLabels[d], dotX, dotY + 11);
-    }
-
-    ctx.restore();
-  });
-}
-
-// 右側寶箱收集欄（僅 3 格：銅/銀/金，宙斯赫拉左右已有）
-function drawChestPanel(ctx) {
-  if (inFG) return;
-  const px = 1022, pw = 250;
-  const PANEL_CHESTS = CHESTS.slice(0, 3); // 只取前 3 個（排除宙斯&赫拉）
-  const slotH = 100, gap = 10;
-  const panelH = PANEL_CHESTS.length * slotH + (PANEL_CHESTS.length - 1) * gap; // 320px
-  // 在盤面高度內垂直置中
-  const startY = GRID_Y + Math.floor((GRID_H - panelH) / 2); // ≈197
-
-  // ── 面板標題 ──
-  ctx.save();
-  ctx.fillStyle = 'rgba(15,23,42,0.75)';
-  ctx.beginPath(); ctx.roundRect(px, startY - 28, pw, 22, 6); ctx.fill();
-  ctx.fillStyle = '#64748b'; ctx.font = 'bold 12px Arial';
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText('📯 號角收集', px + pw / 2, startY - 17);
-  ctx.restore();
-
-  // 只亮當前達到的最高門檻那一項
-  let activeChestIdx = -1;
-  for (let i = 0; i < PANEL_CHESTS.length; i++) {
-    if (keyCount >= PANEL_CHESTS[i].keys) activeChestIdx = i;
-  }
-
-  PANEL_CHESTS.forEach((chest, i) => {
-    const cy = startY + i * (slotH + gap);
-    const isActive = i === activeChestIdx;
-    const pulse = 0.7 + 0.3 * Math.sin(Date.now() / 220);
-
-    ctx.save();
-
-    // 背景
-    const bg = ctx.createLinearGradient(px, cy, px, cy + slotH);
-    if (isActive) {
-      bg.addColorStop(0, chest.color + 'ee'); bg.addColorStop(1, chest.color + 'bb');
-    } else {
-      bg.addColorStop(0, '#0f172a'); bg.addColorStop(1, '#1e293b');
-    }
-    ctx.fillStyle = bg;
-    ctx.beginPath(); ctx.roundRect(px, cy, pw, slotH, 10); ctx.fill();
-
-    // 邊框
-    if (isActive) {
-      ctx.strokeStyle = chest.glowColor; ctx.lineWidth = 2;
-      ctx.shadowColor = chest.glowColor; ctx.shadowBlur = 14 * pulse;
-    } else {
-      ctx.strokeStyle = '#334155'; ctx.lineWidth = 1;
-    }
-    ctx.beginPath(); ctx.roundRect(px, cy, pw, slotH, 10); ctx.stroke();
-    ctx.shadowBlur = 0;
-
-    // 非 active 壓暗
-    if (!isActive) {
-      ctx.fillStyle = 'rgba(0,0,0,0.48)';
-      ctx.beginPath(); ctx.roundRect(px, cy, pw, slotH, 10); ctx.fill();
-    }
-
-    // 圖示
-    const iconSz = isActive ? Math.floor(30 + 5 * pulse) : 26;
-    ctx.globalAlpha = isActive ? 1 : 0.35;
-    ctx.font = iconSz + 'px Arial';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(chest.icon, px + 38, cy + slotH / 2);
-
-    // 名稱
-    ctx.globalAlpha = isActive ? 1 : 0.3;
-    ctx.fillStyle = isActive ? chest.textColor : '#64748b';
-    ctx.font = `bold ${isActive ? 15 : 13}px Arial`;
-    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-    ctx.fillText(chest.label, px + 66, cy + slotH / 2 - 10);
-
-    // 需要號角
-    ctx.fillStyle = isActive ? chest.glowColor : '#475569';
-    ctx.font = `${isActive ? 12 : 11}px Arial`;
-    ctx.fillText('需要 📯 × ' + chest.keys, px + 66, cy + slotH / 2 + 12);
-
-    // 號角進度點（右下角）
-    const dotR = 5, dotGap = 14;
-    const dotY = cy + slotH - 14;
-    const dotStartX = px + pw - 10 - (chest.keys - 1) * dotGap;
-    for (let d = 0; d < chest.keys; d++) {
-      const dx = dotStartX + d * dotGap;
-      const filled = d < keyCount;
-      ctx.globalAlpha = isActive ? 1 : 0.2;
-      ctx.fillStyle = filled ? chest.glowColor : '#1e293b';
-      ctx.beginPath(); ctx.arc(dx, dotY, dotR, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = filled ? chest.glowColor : '#475569';
-      ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.arc(dx, dotY, dotR, 0, Math.PI * 2); ctx.stroke();
-    }
-
-    ctx.restore();
-  });
-
-}
-
-// ====================================================
-// === 寶箱獎勵機制 ===
-// ====================================================
-
-// 根據 idx 觸發對應獎勵
-function applyChestReward(idx) {
-  switch (idx) {
-    case 0: rewardClearLowestSymbol(); break; // 禿鷹&獵犬
-    case 1: rewardErisMultiplier();    break; // 厄里斯
-    case 2: rewardFreeGame();          break; // 厄倪俄
-  }
-}
-
-// ── 禿鷹&獵犬：消除指定三種低階圖示後補盤重算 ──
-function rewardClearLowestSymbol() {
-  // 禿鷹&獵犬：消除盤面上所有 征服火輪(id=1) / 風暴突擊(id=3) / 不屈戰魂(id=5)
-  keyCount = 0;                    // 補盤後號角從 0 開始重新收集
-  const TARGET_IDS = new Set([1, 3, 5]);
-  let cleared = false;
-  for (let c = 0; c < COLS; c++) {
-    for (let r = 0; r < ROWS; r++) {
-      if (TARGET_IDS.has(board[c][r].id)) {
-        // 爆炸粒子
-        const bx = GRID_X + c * CELL_SIZE + CELL_SIZE / 2;
-        const by = GRID_Y + r * CELL_SIZE + CELL_SIZE / 2;
-        const col = SYMBOLS[board[c][r].id].color;
-        for (let p = 0; p < 10; p++) {
-          const ang = Math.random() * Math.PI * 2;
-          const spd = 2 + Math.random() * 4;
-          particles.push({ x: bx, y: by, vx: Math.cos(ang)*spd, vy: Math.sin(ang)*spd,
-            life: 45, maxLife: 45, color: col, size: 4 + Math.random() * 4 });
-        }
-        board[c][r] = { id: -1, mult: 0, yOffset: 0, isMatched: false, scale: 1, _flash: false };
-        cleared = true;
-      }
-    }
-  }
-  if (cleared) {
-    applyGravity();
-    currentState = STATE.GRAVITY;
-  }
-  // 若盤面本來就沒有該符號，直接停在 IDLE
-}
-
-// ── 厄里斯：全盤消除，後續連爆只出現高賠率三種符號（本 Spin 內有效）──
-// ── 厄里斯：隨機倍率 + 盤面全消 ──
-function rewardErisMultiplier() {
-  keyCount = 0;                    // 補盤後號角從 0 開始重新收集
-  const options = [2, 3, 5, 10];
-  const picked = options[Math.floor(Math.random() * options.length)];
-  const start = multiplier;
-  const target = multiplier * picked;
-  erisMultiplierAnim = {
-    active: true,
-    phase: 'intro',
-    timer: 0,
-    picked,
-    displayFactor: 2,
-    rollIdx: 0,
-    startMultiplier: start,
-    targetMultiplier: target,
-    flyX: 640, flyY: 332,
-    tx: 132, ty: 268
-  };
-}
-
-function rewardClearAllBoard() {
-  // 不啟用厄里斯符號限制：全消後補牌與一般 SPIN 一樣可出所有圖示
-  heraSymbolRestrict = false;
-
-  for (let c = 0; c < COLS; c++) {
-    for (let r = 0; r < ROWS; r++) {
-      const bx = GRID_X + c * CELL_SIZE + CELL_SIZE / 2;
-      const by = GRID_Y + r * CELL_SIZE + CELL_SIZE / 2;
-      for (let p = 0; p < 8; p++) {
-        const ang = Math.random() * Math.PI * 2;
-        const spd = 2 + Math.random() * 5;
-        particles.push({ x: bx, y: by, vx: Math.cos(ang)*spd, vy: Math.sin(ang)*spd,
-          life: 55, maxLife: 55,
-          color: 'hsl(' + Math.floor(Math.random() * 360) + ',85%,65%)',
-          size: 3 + Math.random() * 5 });
-      }
-      board[c][r] = { id: -1, mult: 0, yOffset: 0, isMatched: false, scale: 1, _flash: false };
-    }
-  }
-  applyGravity();
-  // 全消補牌後保底至少一條連線（中列 5 連）
-  const guaranteeRow = 1; // PAYLINES[0] = [1,1,1,1,1]
-  const guaranteeSym = Math.floor(Math.random() * SYMBOLS.length);
-  for (let c = 0; c < COLS; c++) {
-    if (board[c] && board[c][guaranteeRow]) {
-      board[c][guaranteeRow].id = guaranteeSym;
-    }
-  }
-  currentState = STATE.GRAVITY;
-}
-
-// ── 厄倪俄：進入 Free Game（顯示入場面板）──
-function rewardFreeGame() {
-  showFGPanel = true;
-  // 倍數保留，不重置
-}
-
-// ── 宙斯&赫拉：觸發抽牌選擇 ──
-function rewardJackpot() {
-  const order = Math.random() < 0.5 ? [0, 1] : [1, 0];
-  bossCardPick = {
-    active: true,
-    phase: 'picking',
-    hover: -1,
-    selected: -1,
-    flipTimer: 0,
-    flipDuration: 50,
-    order,
-    resultTimer: 0,
-  };
-}
-
-// ── 抽牌完成後發放對應 JP ──
-function grantBossCardJP(cardIdx) {
-  const bossDefs = [
-    { name: '宙斯', fallback: 99999,  label: '⚡ 宙斯' },
-    { name: '赫拉', fallback: 888888, label: '👑 赫拉' },
-  ];
-  const bossId = bossCardPick.order[cardIdx];
-  const def = bossDefs[bossId];
-  const m = monsters.find(b => b.name === def.name);
-  const val = m ? m.jackpot : def.fallback;
-  totalScore += val;
-  jpWinAnim = { active: true, timer: 300, monsterName: def.label, value: val };
-  for (let i = 0; i < 70; i++) {
-    const ang = Math.random() * Math.PI * 2;
-    const spd = 4 + Math.random() * 8;
-    jpWinParticles.push({ x: 640, y: 360, vx: Math.cos(ang)*spd, vy: Math.sin(ang)*spd,
-      life: 160, maxLife: 160,
-      color: 'hsl(' + Math.floor(Math.random() * 60) + ',95%,65%)',
-      size: 5 + Math.random() * 6 });
-  }
-}
 
 // ── 抽牌更新 ──
 function updateBossCardPick() {
@@ -2143,7 +1211,15 @@ function updateBossCardPick() {
     bossCardPick.resultTimer--;
     if (bossCardPick.resultTimer <= 0) {
       bossCardPick.active = false;
-      grantBossCardJP(bossCardPick.selected); // 牌消失後才播報獎
+      // JP 發放（grantBossCardJP 已移除，直接結算）
+      const bossDefs = [
+        { name: '宙斯', fallback: 99999,  label: '⚡ 宙斯' },
+        { name: '赫拉', fallback: 888888, label: '👑 赫拉' },
+      ];
+      const bossId = bossCardPick.order[bossCardPick.selected];
+      const def = bossDefs[bossId];
+      const val = def.fallback;
+      totalScore += val;
     }
   }
 }
@@ -2276,339 +1352,41 @@ function drawBossCardPick(ctx) {
   ctx.restore();
 }
 
-// ── FG HUD：右側局數 + 倍數提示 ──
-function drawFGHUD(ctx) {
-  if (!inFG) return;
-  const px = 1022, pw = 250;
-  const panelY = GRID_Y + Math.floor((GRID_H - 220) / 2);
-
-  ctx.save();
-
-  // 背景框
-  ctx.fillStyle = 'rgba(10,15,32,0.88)';
-  ctx.beginPath(); ctx.roundRect(px, panelY, pw, 220, 12); ctx.fill();
-  const pulse = 0.6 + 0.4 * Math.sin(Date.now() / 220);
-  ctx.strokeStyle = '#eab308'; ctx.lineWidth = 2;
-  ctx.shadowColor = '#eab308'; ctx.shadowBlur = 14 * pulse;
-  ctx.beginPath(); ctx.roundRect(px, panelY, pw, 220, 12); ctx.stroke();
-  ctx.shadowBlur = 0;
-
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-
-  // 標題
-  ctx.fillStyle = '#fef08a'; ctx.font = 'bold 15px Arial';
-  ctx.fillText('⚔️  FREE GAME', px + pw / 2, panelY + 28);
-
-  // 剩餘局數
-  ctx.fillStyle = '#94a3b8'; ctx.font = '13px Arial';
-  ctx.fillText('剩餘局數', px + pw / 2, panelY + 68);
-  ctx.fillStyle = '#fde68a'; ctx.font = 'bold 52px Arial';
-  ctx.shadowColor = '#eab308'; ctx.shadowBlur = 18 * pulse;
-  ctx.fillText(String(fgSpinsLeft), px + pw / 2, panelY + 120);
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = '#64748b'; ctx.font = '12px Arial';
-  ctx.fillText('/ ' + fgSpinsTotal + ' 局', px + pw / 2, panelY + 157);
-
-  ctx.restore();
-}
-
-// ── FG 結束面板 ──
-function drawFGEndPanel(ctx) {
-  if (!showFGEndPanel) return;
-  ctx.save();
-  ctx.fillStyle = 'rgba(0,0,0,0.75)';
-  ctx.fillRect(0, 0, 1280, 720);
-
-  const bw = 480, bh = 280, bx = 640 - bw / 2, by = 360 - bh / 2;
-  const grad = ctx.createLinearGradient(bx, by, bx, by + bh);
-  grad.addColorStop(0, '#1a2040'); grad.addColorStop(1, '#0a0f20');
-  ctx.fillStyle = grad;
-  ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 20); ctx.fill();
-
-  const pulse = 0.7 + 0.3 * Math.sin(Date.now() / 200);
-  ctx.strokeStyle = '#eab308'; ctx.lineWidth = 2.5;
-  ctx.shadowColor = '#eab308'; ctx.shadowBlur = 18 * pulse;
-  ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 20); ctx.stroke();
-  ctx.shadowBlur = 0;
-
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.font = '38px Arial'; ctx.fillText('⚔️', 640, by + 58);
-  ctx.fillStyle = '#fef08a'; ctx.font = 'bold 26px Arial';
-  ctx.shadowColor = '#eab308'; ctx.shadowBlur = 14;
-  ctx.fillText('Free Game 結束！', 640, by + 108);
-  ctx.shadowBlur = 0;
-
-  ctx.fillStyle = '#94a3b8'; ctx.font = '14px Arial';
-  ctx.fillText('本次 FG 累積倍數 × ' + multiplier, 640, by + 148);
-
-  ctx.fillStyle = '#fbbf24'; ctx.font = '13px Arial';
-  ctx.fillText('回到 NG 後，下一次 SPIN 倍數將重置', 640, by + 175);
-
-  // 返回按鈕
-  const btnW = 160, btnH = 44, btnX = 640 - btnW / 2, btnY = by + 210;
-  ctx.fillStyle = '#eab308';
-  ctx.beginPath(); ctx.roundRect(btnX, btnY, btnW, btnH, 10); ctx.fill();
-  ctx.fillStyle = '#0f172a'; ctx.font = 'bold 18px Arial';
-  ctx.fillText('返回遊戲', 640, btnY + btnH / 2);
-
-  ctx.restore();
-}
-
-// ── FG 入場面板繪製 ──
-function drawFGPanel(ctx) {
-  if (!showFGPanel) return;
-  // 半透明遮罩
-  ctx.save();
-  ctx.fillStyle = 'rgba(0,0,0,0.72)';
-  ctx.fillRect(0, 0, 1280, 720);
-
-  // 主框
-  const bw = 520, bh = 260, bx = 640 - bw/2, by = 360 - bh/2;
-  const grad = ctx.createLinearGradient(bx, by, bx, by+bh);
-  grad.addColorStop(0, '#1a2040'); grad.addColorStop(1, '#0a0f20');
-  ctx.fillStyle = grad;
-  ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 20); ctx.fill();
-
-  const pulse = 0.7 + 0.3 * Math.sin(Date.now() / 200);
-  ctx.strokeStyle = '#eab308'; ctx.lineWidth = 2.5;
-  ctx.shadowColor = '#eab308'; ctx.shadowBlur = 18 * pulse;
-  ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 20); ctx.stroke();
-  ctx.shadowBlur = 0;
-
-  // 標題
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.font = '42px Arial'; ctx.fillText('⚔️', 640, by + 68);
-  ctx.fillStyle = '#fef08a'; ctx.font = 'bold 28px Arial';
-  ctx.shadowColor = '#eab308'; ctx.shadowBlur = 14;
-  ctx.fillText('進入 Free Game！', 640, by + 122);
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = '#94a3b8'; ctx.font = '15px Arial';
-  ctx.fillText('厄倪俄降臨，戰場即將掀起風暴', 640, by + 158);
-
-  // 開始按鈕
-  const btnW = 160, btnH = 44, btnX = 640 - btnW/2, btnY = by + 196;
-  ctx.fillStyle = '#eab308';
-  ctx.beginPath(); ctx.roundRect(btnX, btnY, btnW, btnH, 10); ctx.fill();
-  ctx.fillStyle = '#0f172a'; ctx.font = 'bold 18px Arial';
-  ctx.fillText('開始 FG', 640, btnY + btnH/2);
-
-  ctx.restore();
-}
-
-// ====================================================
-// 寶箱解鎖動畫（局末）
-function updateChestUnlockAnim() {
-  if (!chestUnlockAnim.active) return;
-  chestUnlockAnim.timer++;
-  if (chestUnlockAnim.timer >= CHEST_UNLOCK_FRAMES) {
-    chestUnlockAnim.active = false;
-    if (pendingChestReward >= 0) {
-      applyChestReward(pendingChestReward);
-      pendingChestReward = -1;
-    }
-  }
-}
-
-function drawChestUnlockAnim(ctx) {
-  if (!chestUnlockAnim.active) return;
-  const chest = CHESTS[chestUnlockAnim.idx];
-  if (!chest) return;
-  const t = chestUnlockAnim.timer / CHEST_UNLOCK_FRAMES;
-  const alpha = Math.min(1, Math.min(t * 6, (1 - t) * 6));
-  const isBossSlot = chestUnlockAnim.idx === 3;
-
-  ctx.save();
-  ctx.globalAlpha = alpha;
-  const bw = 440, bh = isBossSlot ? 170 : 150, bx = 640 - bw/2, by = 300 - bh/2;
-  const grad = ctx.createLinearGradient(bx, by, bx, by+bh);
-  grad.addColorStop(0, '#1a2744'); grad.addColorStop(1, '#0f172a');
-  ctx.fillStyle = grad;
-  ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 18); ctx.fill();
-  ctx.strokeStyle = chest.glowColor; ctx.lineWidth = 2.5;
-  ctx.shadowColor = chest.glowColor; ctx.shadowBlur = 22;
-  ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 18); ctx.stroke();
-  ctx.shadowBlur = 0;
-
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-
-  if (isBossSlot) {
-    // 宙斯 & 赫拉 解鎖
-    ctx.font = '44px Arial';
-    ctx.fillText('⚡', 640 - 32, by + 54);
-    ctx.fillText('👑', 640 + 32, by + 54);
-    ctx.fillStyle = '#fde68a'; ctx.font = 'bold 22px Arial';
-    ctx.shadowColor = '#facc15'; ctx.shadowBlur = 14;
-    ctx.fillText('🎁 解鎖 宙斯 & 赫拉！', 640, by + 105);
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = '#94a3b8'; ctx.font = '13px Arial';
-    ctx.fillText('本局收集 6 把號角，Boss 降臨！', 640, by + 138);
-  } else {
-    // 一般寶箱解鎖
-    ctx.font = '46px Arial';
-    ctx.fillText(chest.icon, 640, by + 52);
-    ctx.fillStyle = chest.textColor; ctx.font = 'bold 23px Arial';
-    ctx.shadowColor = chest.glowColor; ctx.shadowBlur = 14;
-    ctx.fillText('🎁 解鎖 ' + chest.label + '！', 640, by + 105);
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = '#94a3b8'; ctx.font = '13px Arial';
-    ctx.fillText('本局收集 ' + chest.keys + ' 把號角', 640, by + 135);
-  }
-  ctx.restore();
-}
-
-function updateFlyingAttacks() {
-  flyingAttacks = flyingAttacks.filter(fa => {
-    fa.x += (fa.tx - fa.x) * 0.1;
-    fa.y += (fa.ty - fa.y) * 0.1;
-    fa.progress = Math.min(1, fa.progress + 0.03);
-    if (fa.progress >= 1) {
-      if (fa.isKey) {
-        keyCount = Math.min(6, keyCount + 1);
-      } else if (fa.isCrown) {
-        crownCount++;
-      } else if (fa.isNecklace) {
-        necklaceCount++;
-      } else if (fa.target) {
-        // Boss 攻擊命中
-        const m = fa.target;
-        if (m && m.hp > 0 && !m.isDead) {
-          m.hp = Math.max(0, m.hp - 1);
-          m.shake = 12;
-          if (m.hp === 0) {
-            m.isDead = true;
-            if (m.isJP) {
-              jpWinAnim = { active: true, timer: 240, monsterName: m.name, value: m.jackpot };
-              for (let i = 0; i < 50; i++) {
-                const ang = Math.random() * Math.PI * 2;
-                const spd = 4 + Math.random() * 6;
-                jpWinParticles.push({ x: 640, y: 360, vx: Math.cos(ang)*spd, vy: Math.sin(ang)*spd,
-                  life: 120, maxLife: 120, color: 'hsl('+Math.floor(Math.random()*360)+',90%,65%)', size: 5+Math.random()*5 });
-              }
-            }
-          }
-        }
-      }
-      return false;
-    }
-    return true;
-  });
-}
-
-function drawFlyingAttacks(ctx) {
-  flyingAttacks.forEach(fa => {
-    ctx.save();
-    ctx.globalAlpha = Math.min(1, (1 - fa.progress) * 3);
-    ctx.font = 'bold 28px Arial';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    if (fa.isKey) {
-      ctx.shadowColor = '#fbbf24'; ctx.shadowBlur = 16;
-      ctx.fillText('📯', fa.x, fa.y);
-    } else if (fa.isCrown) {
-      ctx.shadowColor = '#facc15'; ctx.shadowBlur = 16;
-      ctx.fillText('👑', fa.x, fa.y);
-    } else if (fa.isNecklace) {
-      ctx.shadowColor = '#f472b6'; ctx.shadowBlur = 16;
-      ctx.fillText('📿', fa.x, fa.y);
-    } else {
-      ctx.shadowColor = '#ef4444'; ctx.shadowBlur = 14;
-      ctx.fillText('⚔️', fa.x, fa.y);
-    }
-    ctx.shadowBlur = 0;
-    ctx.restore();
-  });
-}
-
-function updateJPWinAnim() {
-  if (!jpWinAnim.active) return;
-  jpWinAnim.timer--;
-  jpWinParticles = jpWinParticles.filter(p => {
-    p.x += p.vx; p.y += p.vy; p.vy += 0.2; p.life--; return p.life > 0;
-  });
-  if (jpWinAnim.timer <= 0) {
-    jpWinAnim.active = false;
-    if (jpWinQueue.length > 0) {
-      // 還有待播 JP，繼續下一個
-      startNextJP();
-    } else if (pendingMultToScoreApply) {
-      // 所有 JP 播完，再做倍數結算
-      const p = pendingMultToScoreApply;
-      pendingMultToScoreApply = null;
-      multToScoreAnim = {
-        active: true, phase: 'flying', timer: 0,
-        flyX: 132, flyY: 268, scoreShift: 0,
-        value: p.mult, baseScore: p.base, finalScore: p.final,
-      };
-    }
-  }
-}
-
-function drawJPWinAnim(ctx) {
-  if (!jpWinAnim.active) return;
-  const { timer, monsterName, value } = jpWinAnim;
-  const totalFrames = 240;
-  const progress = 1 - timer / totalFrames;
-  const alpha = Math.min(1, Math.min((1-progress)*5, progress*10));
-
-  // 粒子
-  jpWinParticles.forEach(p => {
-    ctx.save(); ctx.globalAlpha = p.life / p.maxLife;
-    ctx.fillStyle = p.color; ctx.beginPath();
-    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill(); ctx.restore();
-  });
-
-  // 金色光罩
-  const glow = Math.sin(progress * Math.PI * 6) * 0.15 + 0.15;
-  ctx.fillStyle = 'rgba(255,215,0,' + glow + ')';
-  ctx.fillRect(0, 0, 1280, 720);
-
-  // 中央文字框
-  ctx.save(); ctx.globalAlpha = alpha;
-  const bw = 520, bh = 160, bx = 640 - bw/2, by = 360 - bh/2;
-  const grad = ctx.createLinearGradient(bx, by, bx, by+bh);
-  grad.addColorStop(0, '#78350f'); grad.addColorStop(1, '#1c0a00');
-  ctx.fillStyle = grad; ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 20); ctx.fill();
-  ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 4;
-  ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 30;
-  ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 20); ctx.stroke();
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = '#ffd700'; ctx.font = 'bold 58px Arial';
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 30;
-  ctx.fillText('🏆 ' + monsterName + ' JP！', 640, 345);
-  ctx.font = 'bold 36px Arial'; ctx.fillStyle = '#fff'; ctx.shadowBlur = 0;
-  ctx.fillText('+' + value.toLocaleString(), 640, 400);
-  ctx.restore();
-}
-
-// updateUnlockAnim → 已由 updateJPWinAnim 取代
-
 // === 更新 ===
 function update(dt) {
   updateParticles();
   updateScoreTexts();
-  updateFlyingMultipliers();
-  updateFlyingAttacks();
   updateFlyingScores();
-  updateMultToScoreAnim();
-  updateErisMultiplierAnim();
-  updateJPWinAnim();
   updateBossCardPick();
-  updateChestUnlockAnim();
-  if (jpWinAnim.active) return; // JP 播放中：凍結狀態機（補盤/結算全部等待）
   switch (currentState) {
     case STATE.SPINNING:    updateSpinning(); break;
-    case STATE.CHECKING:    checkPaylines(); break;
+    case STATE.SYNTHESIS: {
+      checkSynthesis();
+      const win = calcWin();
+      if (win > 0) {
+        winScore += win;
+        totalScore += win;
+        comboCount++;
+        if (comboCount === 1) stats.hits++;
+        currentState = STATE.SHOWING_WIN;
+      } else {
+        // JP 判定：4 色全合成
+        if (synthesizedColors.size === 4 && !bossCardPick.active) {
+          bossCardPick.active = true;
+          bossCardPick.phase = 'picking';
+          bossCardPick.hover = -1;
+          bossCardPick.selected = -1;
+          bossCardPick.order = Math.random() < 0.5 ? [0,1] : [1,0];
+        }
+        currentState = STATE.IDLE;
+      }
+      break;
+    }
     case STATE.SHOWING_WIN: updateShowingWin(); break;
     case STATE.POPPING:     updatePopping(); break;
     case STATE.GRAVITY:     updateGravity(); break;
-    case STATE.REVEALING:   updateRevealing(); break;
-    case STATE.UNLOCK_ANIM: currentState = STATE.CHECKING; break;
     case STATE.IDLE:
-      if (!erisMultiplierAnim.active && !multToScoreAnim.active && !pendingMultToScoreApply && !jpWinAnim.active && jpWinQueue.length === 0 && inFG && fgSpinsLeft > 0) {
-        autoSpinDelay--;
-        if (autoSpinDelay <= 0) startSpin();
-      } else if (!erisMultiplierAnim.active && !multToScoreAnim.active && !pendingMultToScoreApply && !jpWinAnim.active && jpWinQueue.length === 0 && !inFG && !showFGEndPanel && isAutoSpinning) {
+      if (isAutoSpinning) {
         autoSpinDelay--;
         if (autoSpinDelay <= 0) startSpin();
       }
@@ -2655,56 +1433,6 @@ function drawSymbol(ctx, id, x, y, size, alpha) {
   ctx.restore();
 }
 
-function drawWinLines(ctx) {
-  if (currentState !== STATE.SHOWING_WIN || winLines.length === 0) return;
-  const flashOn = (popWaitTimer % 12) < 6;
-
-  winLines.forEach(wl => {
-    const color = (SYMBOLS[wl.symbolId] ? SYMBOLS[wl.symbolId].color : '#facc15');
-    const winCells = wl.cells;
-
-    const points = winCells.map(({ c, r }) => ({
-      x: GRID_X + c * CELL_SIZE + CELL_SIZE / 2,
-      y: GRID_Y + r * CELL_SIZE + CELL_SIZE / 2
-    }));
-
-    ctx.save();
-    // 外層光暈（粗線，低透明）
-    ctx.globalAlpha = flashOn ? 0.35 : 0.12;
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 18;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.shadowColor = color;
-    ctx.shadowBlur = flashOn ? 30 : 10;
-    ctx.beginPath();
-    points.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
-    ctx.stroke();
-
-    // 內層亮線（細線，高透明）
-    ctx.globalAlpha = flashOn ? 0.95 : 0.3;
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 3;
-    ctx.shadowColor = color;
-    ctx.shadowBlur = flashOn ? 16 : 6;
-    ctx.beginPath();
-    points.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
-    ctx.stroke();
-
-    // 各節點圓點
-    points.forEach(p => {
-      ctx.globalAlpha = flashOn ? 1.0 : 0.4;
-      ctx.fillStyle = '#ffffff';
-      ctx.shadowColor = color;
-      ctx.shadowBlur = flashOn ? 20 : 8;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, flashOn ? 7 : 5, 0, Math.PI * 2);
-      ctx.fill();
-    });
-
-    ctx.restore();
-  });
-}
 
 function drawBoard(ctx) {
   ctx.save();
@@ -2712,129 +1440,116 @@ function drawBoard(ctx) {
   ctx.rect(GRID_X, GRID_Y, GRID_W, GRID_H);
   ctx.clip();
 
+  // ── 普通格繪製 ──
   for (let c = 0; c < COLS; c++) {
-    const spinOff = (colStates[c] !== 'idle') ? (colOffsets[c] + colBounce[c]) : 0;
+    const offset = (colOffsets[c] || 0);
     for (let r = 0; r < ROWS; r++) {
       const cell = board[c][r];
-      if (!cell || cell.id === -1) continue;
+      if (!cell || cell.isMerged) continue;
+
       const x = GRID_X + c * CELL_SIZE;
-      const y = GRID_Y + r * CELL_SIZE + (cell.yOffset || 0) + spinOff;
+      const y = GRID_Y + r * CELL_SIZE + (cell.yOffset || 0) + offset;
+      const alpha = cell.isMatched ? 0.35 : 1.0;
+      const sc = cell.scale || 1;
 
-      const alpha = cell._flash ? 1.0 : (cell.isMatched ? 0.4 : 1.0);
-      const scale = cell.scale !== undefined ? cell.scale : 1;
-
-      if (scale !== 1) {
-        ctx.save();
-        const cx = x + CELL_SIZE / 2, cy = y + CELL_SIZE / 2;
-        ctx.translate(cx, cy);
-        ctx.scale(scale, scale);
-        ctx.translate(-cx, -cy);
-        drawSymbol(ctx, cell.id, x, y, CELL_SIZE, alpha);
-        ctx.restore();
-      } else {
-        drawSymbol(ctx, cell.id, x, y, CELL_SIZE, alpha);
+      ctx.save();
+      if (sc !== 1) {
+        ctx.translate(x + CELL_SIZE / 2, y + CELL_SIZE / 2);
+        ctx.scale(sc, sc);
+        ctx.translate(-(x + CELL_SIZE / 2), -(y + CELL_SIZE / 2));
       }
 
+      drawSymbol(ctx, cell.id, x, y, CELL_SIZE, alpha);
+
+      // 格子邊框
       ctx.strokeStyle = cell.isMatched ? '#facc15' : 'rgba(255,255,255,0.15)';
       ctx.lineWidth = cell.isMatched ? 3 : 1;
       ctx.beginPath();
       ctx.roundRect(x + 2, y + 2, CELL_SIZE - 4, CELL_SIZE - 4, 10);
       ctx.stroke();
-    }
-  }
-  ctx.restore();
-}
-
-// === 圖示隱藏倍數：預報發光（跟著圖示）+ 消除後停留顯示 ===
-function drawMultPreviewGlow(ctx) {
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(GRID_X, GRID_Y, GRID_W, GRID_H);
-  ctx.clip();
-
-  const now = Date.now();
-
-  // ── 一、預報發光：圖示還在盤面，帶 mult>=20 的格子亮邊框 ──
-  for (let c = 0; c < COLS; c++) {
-    const spinOff = (colStates[c] !== 'idle') ? (colOffsets[c] + colBounce[c]) : 0;
-    for (let r = 0; r < ROWS; r++) {
-      const cell = board[c][r];
-      if (!cell || cell.id === -1 || !cell.mult || cell.mult < 20) continue;
-
-      const isBright = cell.mult >= 250;
-      const pulse    = isBright ? 0.65 + 0.35 * Math.sin(now / 80)
-                                : 0.70 + 0.30 * Math.sin(now / 130);
-      // 20-100x = 紅色；250-1000x = 金色
-      const glowColor = isBright ? '#ffd700' : '#ef4444';
-      const rgb       = isBright ? '255,215,0' : '239,68,68';
-      const glowBlur  = isBright ? 38 * pulse : 18 * pulse;
-      const lineW     = isBright ? 5 : 3;
-      const fillAlpha = isBright ? 0.18 * pulse : 0.09 * pulse;
-
-      const x = GRID_X + c * CELL_SIZE;
-      const y = GRID_Y + r * CELL_SIZE + (cell.yOffset || 0) + spinOff;
-
-      ctx.fillStyle = `rgba(${rgb},${fillAlpha})`;
-      ctx.beginPath(); ctx.roundRect(x+2, y+2, CELL_SIZE-4, CELL_SIZE-4, 10); ctx.fill();
-      ctx.shadowColor = glowColor; ctx.shadowBlur = glowBlur;
-      ctx.strokeStyle = glowColor; ctx.lineWidth = lineW;
-      ctx.beginPath(); ctx.roundRect(x+2, y+2, CELL_SIZE-4, CELL_SIZE-4, 10); ctx.stroke();
-      ctx.shadowBlur = 0;
+      ctx.restore();
     }
   }
 
-  ctx.restore();
-}
+  // ── 合成符繪製 ──
+  mergedCells.forEach(m => {
+    const w = CELL_SIZE * m.size;
+    const x = GRID_X + m.col * CELL_SIZE;
+    const y = GRID_Y + m.row * CELL_SIZE;
 
-// === 統一指示器顯示層（所有機制同時出現、同樣樣式）===
-function drawRevealOverlay(ctx) {
-  if (currentState !== STATE.REVEALING || unifiedRevealSeq.length === 0) return;
+    // 主體填色
+    if (m.size === 4 && m.colorId2 !== undefined) {
+      // 1×4：左半用 colorId，右半用 colorId2
+      ctx.fillStyle = COLOR_HEX[m.colorId] + 'aa';
+      ctx.beginPath();
+      ctx.roundRect(x + 2, y + 2, CELL_SIZE * 2 - 4, CELL_SIZE - 4, 10);
+      ctx.fill();
+      ctx.fillStyle = COLOR_HEX[m.colorId2] + 'aa';
+      ctx.beginPath();
+      ctx.roundRect(x + CELL_SIZE * 2 + 2, y + 2, CELL_SIZE * 2 - 4, CELL_SIZE - 4, 10);
+      ctx.fill();
+    } else {
+      ctx.fillStyle = COLOR_HEX[m.colorId] + 'aa';
+      ctx.beginPath();
+      ctx.roundRect(x + 2, y + 2, w - 4, CELL_SIZE - 4, 10);
+      ctx.fill();
+    }
 
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(GRID_X, GRID_Y, GRID_W, GRID_H);
-  ctx.clip();
-
-  const now = Date.now();
-  const isHoldPhase = unifiedRevealTimer <= UNIFIED_HOLD_FRAMES;
-  // Hold 期間：全部顯示；飛出期間：只顯示尚未飛出的
-  const startIdx = isHoldPhase ? 0 : unifiedRevealIdx;
-  const pulse = 0.75 + 0.25 * Math.sin(now / 110);
-
-  for (let i = startIdx; i < unifiedRevealSeq.length; i++) {
-    const item = unifiedRevealSeq[i];
-    const x = GRID_X + item.c * CELL_SIZE + 4;
-    const y = GRID_Y + item.r * CELL_SIZE + 4;
-    const w = CELL_SIZE - 8;
-    const h = CELL_SIZE - 8;
-
-    // 統一金色框樣式
+    // 金色發光外框
     ctx.save();
     ctx.shadowColor = '#ffd700';
-    ctx.shadowBlur  = 22 * pulse;
+    ctx.shadowBlur = 18;
     ctx.strokeStyle = '#ffd700';
-    ctx.lineWidth   = 3;
-    ctx.beginPath(); ctx.roundRect(x, y, w, h, 8); ctx.stroke();
-    ctx.shadowBlur = 0;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.roundRect(x + 2, y + 2, w - 4, CELL_SIZE - 4, 10);
+    ctx.stroke();
+    ctx.restore();
 
-    // 標籤文字
-    let label = '';
-    if (item.type === 'key')           label = '📯';
-    else if (item.type === 'crown')    label = '👑';
-    else if (item.type === 'necklace') label = '📿';
-    else if (item.type === 'wild')     label = 'W';
-    else label = item.value + 'x';
-
-    ctx.fillStyle = '#ffd700';
-    ctx.font = `bold ${label.length > 3 ? 28 : 34}px Arial`;
+    // 中央標籤文字
+    ctx.fillStyle = '#fff';
+    ctx.font = `bold ${m.size === 4 ? 18 : 15}px Arial`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(label, x + w / 2, y + h / 2);
-    ctx.restore();
+    const label = m.size === 4
+      ? `${COLOR_NAMES[m.colorId]}+${COLOR_NAMES[m.colorId2]} ✦`
+      : `${COLOR_NAMES[m.colorId]} ✦`;
+    ctx.fillText(label, x + w / 2, y + CELL_SIZE / 2);
+  });
+
+  // ── 分裂徽章（×N）繪製 ──
+  for (let c = 0; c < COLS; c++) {
+    const offset = (colOffsets[c] || 0);
+    for (let r = 0; r < ROWS; r++) {
+      const cell = board[c][r];
+      if (!cell || cell.isMerged || cell.id < 0) continue;
+      const colorId = Math.floor(cell.id / 2);
+      const sp = splitCount[colorId];
+      if (sp <= 1) continue;
+
+      const x = GRID_X + c * CELL_SIZE;
+      const y = GRID_Y + r * CELL_SIZE + (cell.yOffset || 0) + offset;
+      const bx = x + CELL_SIZE - 30;
+      const by = y + 4;
+      const bw = 26, bh = 20;
+
+      ctx.fillStyle = COLOR_HEX[colorId];
+      ctx.beginPath();
+      ctx.roundRect(bx, by, bw, bh, 5);
+      ctx.fill();
+
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 11px Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`×${sp}`, bx + bw / 2, by + bh / 2);
+    }
   }
 
   ctx.restore();
 }
+
+
 
 // === Task 4: UI 繪製函式 ===
 function drawGameFrame(ctx) {
@@ -2925,10 +1640,8 @@ function drawBottomBar(ctx) {
   ctx.fillText('強開', 189, 670);
   ctx.fillStyle = hasForce ? '#fbbf24' : '#64748b';
   ctx.font = '11px Arial';
-  const _keyLabels = { key_0: '禿鷹', key_1: '厄里斯', key_2: '厄倪俄',
-    crown_1: '皇冠×1', crown_2: '皇冠×2', crown_3: '皇冠×3', crown_4: '皇冠×4',
-    necklace_1: '項鍊×1', necklace_2: '項鍊×2', necklace_3: '項鍊×3', necklace_4: '項鍊×4' };
-  const forceLabel = forceSpinType === 'mult' ? '倍數' : forceSpinType === 'wild' ? 'WILD' : _keyLabels[forceSpinType] || '未設定';
+  const _keyLabels = { all_synth: '4色合成', synth_0: '紅合成', synth_1: '黃合成' };
+  const forceLabel = _keyLabels[forceSpinType] || '未設定';
   ctx.fillText(forceLabel, 189, 695);
 
   // INFO 按鈕
@@ -2947,21 +1660,13 @@ function drawForceMenu(ctx) {
   if (!showForceMenu) return;
 
   const menuX = 148, menuW = 110;
-  const options = [
-    { label: '⚡ 倍數',    type: 'mult'     },
-    { label: '✦ WILD',    type: 'wild'     },
-    { label: '🦅 禿鷹&獵犬', type: 'key_0' },
-    { label: '🍎 厄里斯',   type: 'key_1'  },
-    { label: '⚔️ 厄倪俄',  type: 'key_2'  },
-    { label: '👑 皇冠 ×1', type: 'crown_1' },
-    { label: '👑 皇冠 ×2', type: 'crown_2' },
-    { label: '👑 皇冠 ×3', type: 'crown_3' },
-    { label: '👑 皇冠 ×4', type: 'crown_4' },
-    { label: '📿 項鍊 ×1', type: 'necklace_1' },
-    { label: '📿 項鍊 ×2', type: 'necklace_2' },
-    { label: '📿 項鍊 ×3', type: 'necklace_3' },
-    { label: '📿 項鍊 ×4', type: 'necklace_4' },
+  const opts = [
+    { label: '關閉', value: null },
+    { label: '4色全合成', value: 'all_synth' },
+    { label: '紅合成', value: 'synth_0' },
+    { label: '黃合成', value: 'synth_1' },
   ];
+  const options = opts.map(o => ({ label: o.label, type: o.value }));
   const menuH = 10 + options.length * 40 - 8 + 10; // 252px for 6 items
   const menuY = 658 - menuH - 6;  // 上浮到 強開 按鈕上方
   ctx.fillStyle = 'rgba(10,18,35,0.97)';
@@ -3031,37 +1736,19 @@ function draw() {
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, 1280, 720);
 
-  if (showStatsPanel) drawTopStats(ctx);
-  drawBossCards(ctx);
-  drawJPPanel(ctx);
-  drawChestPanel(ctx);
+  drawGameFrame(ctx);
   drawBoard(ctx);
-  drawMultPreviewGlow(ctx);
-  drawRevealOverlay(ctx);
-  drawWinLines(ctx);
-  drawParticles(ctx);
-  drawScoreTexts(ctx);
-  drawComboDisplay(ctx);
-  drawBottomSpecials(ctx);
   drawJPBars(ctx);
   drawScoreAccumulator(ctx);
-  drawMultiplierBar(ctx);
-  drawWinLog(ctx);
-  drawFlyingMultipliers(ctx);
-  drawFlyingAttacks(ctx);
   drawFlyingScores(ctx);
-  drawMultToScoreAnim(ctx);
-  drawErisMultiplierAnim(ctx);
-  drawJPWinAnim(ctx);
-  drawChestUnlockAnim(ctx);
-  drawFGHUD(ctx);
-  drawFGPanel(ctx);
-  drawFGEndPanel(ctx);
-  drawGameFrame(ctx);
-  drawBossCardPick(ctx);
+  drawParticles(ctx);
+  drawScoreTexts(ctx);
   drawBottomBar(ctx);
   drawSpinButton(ctx);
+  drawTopStats(ctx);
+  drawBossCardPick(ctx);
   drawForceMenu(ctx);
+  drawWinLog(ctx);
 }
 
 // === Canvas 事件監聽器 ===
@@ -3088,40 +1775,22 @@ canvas.addEventListener('click', e => {
     return;
   }
 
-  // FG 結束面板：點「返回遊戲」
-  if (showFGEndPanel) {
-    const bw = 160, bh = 44, bx = 640 - bw / 2, by = 360 - 140 + 210;
-    if (mx >= bx && mx <= bx + bw && my >= by && my <= by + bh) {
-      showFGEndPanel = false;
-    }
-    return;
-  }
-
-  // FG 入場面板：點「開始 FG」按鈕
-  if (showFGPanel) {
-    const bw = 160, bh = 44, bx = 640 - bw / 2, by = 360 - 130 + 196;
-    if (mx >= bx && mx <= bx + bw && my >= by && my <= by + bh) {
-      showFGPanel = false;
-      inFG = true;
-      fgSpinsLeft = FG_TOTAL_SPINS;
-      fgSpinsTotal = FG_TOTAL_SPINS;
-      autoSpinDelay = 0;
-      startSpin(); // multiplier 已因 inFG=true 而不被重置
-    }
-    return;
-  }
-
   // 強開選單選項（優先判斷，避免被按鈕覆蓋）
   if (showForceMenu) {
     const menuX = 148, menuW = 110;
-    const options = ['mult', 'wild', 'key_0', 'key_1', 'key_2', 'crown_1', 'crown_2', 'crown_3', 'crown_4', 'necklace_1', 'necklace_2', 'necklace_3', 'necklace_4'];
-    const menuH = 10 + options.length * 40 - 8 + 10;
+    const forceOpts = [
+      { label: '關閉', value: null },
+      { label: '4色全合成', value: 'all_synth' },
+      { label: '紅合成', value: 'synth_0' },
+      { label: '黃合成', value: 'synth_1' },
+    ];
+    const menuH = 10 + forceOpts.length * 40 - 8 + 10;
     const menuY = 658 - menuH - 6;
     let hit = false;
-    options.forEach((type, i) => {
+    forceOpts.forEach(({ value }, i) => {
       const btnX = menuX + 8, btnY = menuY + 10 + i * 40, btnW = menuW - 16, btnH = 32;
       if (mx >= btnX && mx <= btnX + btnW && my >= btnY && my <= btnY + btnH) {
-        forceSpinType = (forceSpinType === type) ? null : type;
+        forceSpinType = value;
         showForceMenu = false;
         hit = true;
       }
@@ -3196,7 +1865,6 @@ function gameLoop(ts) {
 (async function main() {
   await loadIcons();
   generateBoard();
-  initMonsters();
   requestAnimationFrame(gameLoop);
 })();
 </script>
