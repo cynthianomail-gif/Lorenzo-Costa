@@ -1420,6 +1420,18 @@ function drawWaysDisplay(ctx) {
 }
 
 
+function drawMapShip(ctx) {
+  // 船永遠畫在最上層（由 draw() 最後呼叫）
+  ctx.save();
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.shadowBlur = 0;
+  ctx.filter = 'none';
+  ctx.font = '18px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('⛵', mapShip.x, mapShip.y);
+  ctx.restore();
+}
+
 function drawMapPanel(ctx) {
   const px = MAP_PX, py = MAP_PY, pw = MAP_PW, ph = MAP_PH;
   const allLit = synthesizedColors.size >= 4;
@@ -1570,18 +1582,7 @@ function drawMapPanel(ctx) {
   }
   ctx.globalAlpha = 1;
 
-  // ── 船 ──
-  ctx.save();
-  ctx.globalAlpha = 1;
-  ctx.globalCompositeOperation = 'source-over';
-  ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
-  ctx.filter = 'none';
-  // 深色底圓讓 emoji 在亮背景上也清楚
-  ctx.fillStyle = 'rgba(0,0,0,0.45)';
-  ctx.beginPath(); ctx.arc(mapShip.x, mapShip.y, 11, 0, Math.PI * 2); ctx.fill();
-  ctx.font = '18px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText('⛵', mapShip.x, mapShip.y);
-  ctx.restore();
+  // 船由 draw() 最後統一繪製（drawMapShip），確保層級最上
 
   // ── 伊奧科斯港標籤 ──
   ctx.font = '8px Arial'; ctx.fillStyle = 'rgba(255,255,255,0.3)';
@@ -2856,6 +2857,7 @@ function draw() {
   drawFGHUD(ctx);
   drawShipFGPanel(ctx);
   drawFGEndPanel(ctx);
+  drawMapShip(ctx);  // 船永遠在最上層
 }
 
 // === Canvas 事件監聽器 ===
