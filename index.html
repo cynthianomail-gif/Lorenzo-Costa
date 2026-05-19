@@ -674,13 +674,7 @@ function computeCurrentWays() {
     for (let row = 0; row < ROWS; row++) {
       const cell = board[col][row];
       if (!cell) { colTotal += 1; continue; }
-      if (cell.isMerged) {
-        // 合成格套用對應顏色的 splitCount（與 calcWin 一致）
-        const sc1 = cell.colorId  >= 0 ? splitCount[cell.colorId]  : 1;
-        const sc2 = cell.colorId2 >= 0 ? splitCount[cell.colorId2] : 0;
-        colTotal += sc1 + sc2;  // 1×4 同時代表兩色故相加，1×2 sc2=0
-        continue;
-      }
+      if (cell.isMerged) { colTotal += 1; continue; } // 合成格固定 +1，不套 splitCount
       if (cell.id >= 0 && cell.id < 8) colTotal += splitCount[Math.floor(cell.id / 2)];
       else colTotal += 1;
     }
@@ -886,22 +880,24 @@ function calcWin() {
     const split   = splitCount[colorId];
 
     // 各列有效計數
+    // 規則：普通格 ×splitCount，合成格本身固定 ×1（不套用 split，不增也不減）
     const colCounts = [];
     for (let col = 0; col < COLS; col++) {
-      let count = 0;
+      let regCount   = 0;  // 普通格數（套用 split）
+      let mergeCount = 0;  // 合成格數（固定 ×1）
       for (let row = 0; row < ROWS; row++) {
         const cell = board[col][row];
         if (!cell.isMerged && cell.id === symId) {
-          count++;
+          regCount++;
         } else if (cell.isMerged) {
-          // 合成符 master 與 slave 都計入該列（slave 同樣持有 colorId/colorId2）
+          // 合成符 master 與 slave 都計入該列
           const cids = cell.colorId2 !== undefined
             ? [cell.colorId, cell.colorId2]
             : [cell.colorId];
-          if (cids.includes(colorId)) count++;
+          if (cids.includes(colorId)) mergeCount++;
         }
       }
-      colCounts.push(count * split);
+      colCounts.push(regCount * split + mergeCount);
     }
 
     // 左→右連續列計 Ways
