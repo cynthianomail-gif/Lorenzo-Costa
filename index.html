@@ -770,6 +770,7 @@ function applySingleSynthesis(col, row) {
   board[col][row]     = { id: -1, isMerged: true, mergeId, colorId, mergeSize: 2, mergeCol: col, mergeRow: row, isMergeSlave: false, isMatched: false, yOffset: 0, scale: 1 };
   board[col + 1][row] = { id: -1, isMerged: true, mergeId, colorId, mergeSize: 2, mergeCol: col, mergeRow: row, isMergeSlave: true,  isMatched: false, yOffset: 0, scale: 1 };
   mergedCells.push({ col, row, colorId, size: 2, displayCount });
+  triggerShipJump(colorId);
   return true;
 }
 
