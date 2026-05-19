@@ -754,7 +754,7 @@ function triggerShipJump(colorId) {
   mapShip.sx            = mapShip.x;
   mapShip.sy            = mapShip.y;
   mapShip.tx            = pt.x;
-  mapShip.ty            = pt.y;
+  mapShip.ty            = pt.y - 22;  // 停在圓圈正上方，不蓋 icon
   mapShip.frame         = 0;
   mapShip.totalFrames   = MAP_FLY_FRAMES;
   mapShip.flying        = true;
@@ -1570,9 +1570,25 @@ function drawMapPanel(ctx) {
   }
   ctx.globalAlpha = 1;
 
-  // ── 船 ──
-  ctx.font = '18px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText('⛵', mapShip.x, mapShip.y);
+  // ── 船（實色幾何形狀） ──
+  ctx.save();
+  ctx.translate(mapShip.x, mapShip.y);
+  ctx.fillStyle   = '#fbbf24';   // 琥珀金
+  ctx.strokeStyle = '#92400e';
+  ctx.lineWidth   = 1;
+  // 船帆（三角）
+  ctx.beginPath();
+  ctx.moveTo(1, -11); ctx.lineTo(8, -2); ctx.lineTo(1, -1);
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+  // 桅桿
+  ctx.fillStyle = '#fbbf24';
+  ctx.fillRect(-0.75, -11, 1.5, 13);
+  // 船身（梯形）
+  ctx.beginPath();
+  ctx.moveTo(-8, 1); ctx.lineTo(8, 1);
+  ctx.lineTo(5, 7);  ctx.lineTo(-5, 7);
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.restore();
 
   // ── 伊奧科斯港標籤 ──
   ctx.font = '8px Arial'; ctx.fillStyle = 'rgba(255,255,255,0.3)';
