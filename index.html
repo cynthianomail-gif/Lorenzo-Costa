@@ -674,7 +674,13 @@ function computeCurrentWays() {
     for (let row = 0; row < ROWS; row++) {
       const cell = board[col][row];
       if (!cell) { colTotal += 1; continue; }
-      if (cell.isMerged) { colTotal += 1; continue; } // 合成格（主/從）每欄固定 +1
+      if (cell.isMerged) {
+        // 合成格套用對應顏色的 splitCount（與 calcWin 一致）
+        const sc1 = cell.colorId  >= 0 ? splitCount[cell.colorId]  : 1;
+        const sc2 = cell.colorId2 >= 0 ? splitCount[cell.colorId2] : 0;
+        colTotal += sc1 + sc2;  // 1×4 同時代表兩色故相加，1×2 sc2=0
+        continue;
+      }
       if (cell.id >= 0 && cell.id < 8) colTotal += splitCount[Math.floor(cell.id / 2)];
       else colTotal += 1;
     }
