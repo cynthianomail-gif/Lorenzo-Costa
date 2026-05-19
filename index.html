@@ -587,7 +587,7 @@ function generateBoard() {
   for (let c = 0; c < COLS; c++) {
     board[c] = [];
     for (let r = 0; r < ROWS; r++) {
-      board[c][r] = { id: Math.floor(Math.random() * 8), yOffset: 0, isMatched: false, scale: 1 };
+      board[c][r] = { id: 0, yOffset: 0, isMatched: false, scale: 1 };
     }
   }
 }
@@ -713,7 +713,14 @@ function computeCurrentWays() {
     for (let row = 0; row < ROWS; row++) {
       const cell = board[col][row];
       if (!cell) { colTotal += 1; continue; }
-      if (cell.isMerged) { colTotal += 1; continue; } // 合成格固定 +1，不套 splitCount
+      if (cell.isMerged) {
+        if (cell.colorId < 0) { colTotal += 1; }
+        else if (cell.colorId2 !== undefined && cell.colorId2 >= 0) {
+          const cid = (col - cell.mergeCol >= 2) ? cell.colorId2 : cell.colorId;
+          colTotal += splitCount[cid];
+        } else { colTotal += splitCount[cell.colorId]; }
+        continue;
+      }
       if (cell.id >= 0 && cell.id < 8) colTotal += splitCount[Math.floor(cell.id / 2)];
       else colTotal += 1;
     }
@@ -917,9 +924,10 @@ function updateSpinning() {
       if (reelOffset[c][r] >= CELL_SIZE) {
         reelOffset[c][r] -= CELL_SIZE;
         reelDispId[c][r]  = reelTopId[c][r];
-        // stopping 狀態讓最終符號捲入，spinning 狀態保持隨機
+        // stopping 狀態讓最終符號捲入，但船符號要等完全停止才顯示
+        const _stopId = board[c][r].id;
         reelTopId[c][r]   = (reelState[c][r] === 'stopping')
-          ? board[c][r].id
+          ? (_stopId >= 8 ? Math.floor(Math.random() * 8) : _stopId)
           : randomReelSymId(c);
       }
     }
@@ -1328,9 +1336,10 @@ function updateGravity() {
       if (reelOffset[c][r] >= CELL_SIZE) {
         reelOffset[c][r] -= CELL_SIZE;
         reelDispId[c][r] = reelTopId[c][r];
+        const _gStopId = board[c][r].id;
         reelTopId[c][r]  = (reelState[c][r] === 'stopping')
-          ? board[c][r].id
-          : randomSymId();
+          ? (_gStopId >= 8 ? Math.floor(Math.random() * 8) : _gStopId)
+          : randomReelSymId(c);
       }
     }
   }
@@ -1546,18 +1555,18 @@ function drawMapPanel(ctx) {
     ctx.fillStyle   = lit ? COLOR_HEX[pt.colorId] + 'bb' : '#1a2535';
     ctx.strokeStyle = lit ? COLOR_HEX[pt.colorId]        : '#2d3f55';
     ctx.lineWidth   = lit ? 2 : 1;
-    ctx.beginPath(); ctx.arc(pt.x, pt.y, 16, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.arc(pt.x, pt.y, 20, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
 
-    ctx.font = '14px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = '20px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.globalAlpha = lit ? 1 : 0.3;
     ctx.fillStyle   = '#fff';
     ctx.fillText(pt.icon, pt.x, pt.y);
     ctx.globalAlpha = 1;
 
     // 地名
-    ctx.font = 'bold 8px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     ctx.fillStyle = lit ? COLOR_HEX[pt.colorId] : 'rgba(255,255,255,0.28)';
-    ctx.fillText(MAP_PLACE_NAMES[pt.colorId], pt.x, pt.y + 20);
+    ctx.fillText(MAP_PLACE_NAMES[pt.colorId], pt.x, pt.y + 24);
 
     // 旗子（已插旗）
     if (mapFlags[pt.colorId]) {
