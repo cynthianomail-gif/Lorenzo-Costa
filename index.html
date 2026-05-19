@@ -1404,76 +1404,123 @@ function drawWaysDisplay(ctx) {
 }
 
 
-// === 收集欄位（盤面右方）===
-function drawCollectionPanel(ctx) {
-  const cx     = GRID_X + GRID_W + 68;   // 與左側 Ways 對稱 ≈ 1033
+function drawMapPanel(ctx) {
+  const px = MAP_PX, py = MAP_PY, pw = MAP_PW, ph = MAP_PH;
   const allLit = synthesizedColors.size >= 4;
 
-  // 四個色塊尺寸與間距
-  const iSize   = 50;
-  const gap     = 12;
-  const padV    = 14;
-  const ph      = 4 * iSize + 3 * gap + 2 * padV;
-  const pw      = 70;
-  const py      = GRID_Y + (GRID_H - ph) / 2;  // 垂直置中於盤面
-  const px      = cx - pw / 2;
+  ctx.save();
 
-  // 背景面板
-  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  // ── 背景：深色漸層 + 像素格線 ──
+  const grad = ctx.createLinearGradient(px, py, px + pw, py + ph);
+  grad.addColorStop(0, '#0a1628');
+  grad.addColorStop(1, '#0d2818');
+  ctx.fillStyle = grad;
   ctx.beginPath();
-  ctx.roundRect(px, py, pw, ph, 12);
+  ctx.roundRect(px, py, pw, ph, 8);
   ctx.fill();
 
-  // 外框
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(px, py, pw, ph, 8);
+  ctx.clip();
+  ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+  ctx.lineWidth = 1;
+  for (let gx = px; gx <= px + pw; gx += 20) {
+    ctx.beginPath(); ctx.moveTo(gx, py); ctx.lineTo(gx, py + ph); ctx.stroke();
+  }
+  for (let gy = py; gy <= py + ph; gy += 20) {
+    ctx.beginPath(); ctx.moveTo(px, gy); ctx.lineTo(px + pw, gy); ctx.stroke();
+  }
+  ctx.restore();
+
+  // ── 外框 ──
   if (allLit) {
-    ctx.save();
-    ctx.shadowColor = '#ffd700';
-    ctx.shadowBlur  = 20;
-    ctx.strokeStyle = '#ffd700';
-    ctx.lineWidth   = 2;
-    ctx.beginPath();
-    ctx.roundRect(px, py, pw, ph, 12);
-    ctx.stroke();
-    ctx.restore();
+    ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 20;
+    ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 2;
   } else {
-    ctx.strokeStyle = 'rgba(255,255,255,0.1)';
-    ctx.lineWidth   = 1;
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 1;
+  }
+  ctx.beginPath(); ctx.roundRect(px, py, pw, ph, 8); ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  // ── 地形目標點 ──
+  for (const pt of MAP_POINTS) {
+    const lit = synthesizedColors.has(pt.colorId);
+
+    // 發光圈（已合成）
+    if (lit) {
+      ctx.save();
+      ctx.shadowColor = COLOR_HEX[pt.colorId];
+      ctx.shadowBlur  = 18;
+      ctx.fillStyle   = COLOR_HEX[pt.colorId] + '30';
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, 22, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // 地點圓圈
+    ctx.fillStyle   = lit ? COLOR_HEX[pt.colorId] + 'bb' : '#1e293b';
+    ctx.strokeStyle = lit ? COLOR_HEX[pt.colorId]        : '#334155';
+    ctx.lineWidth   = lit ? 2 : 1;
     ctx.beginPath();
-    ctx.roundRect(px, py, pw, ph, 12);
+    ctx.arc(pt.x, pt.y, 18, 0, Math.PI * 2);
+    ctx.fill();
     ctx.stroke();
+
+    // 地形圖示
+    ctx.font         = '16px Arial';
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.globalAlpha  = lit ? 1 : 0.3;
+    ctx.fillStyle    = '#fff';
+    ctx.fillText(pt.icon, pt.x, pt.y);
+    ctx.globalAlpha  = 1;
+
+    // 旗子（已插旗）
+    if (mapFlags[pt.colorId]) {
+      const wave = Math.sin(Date.now() / 400) * 3;
+      // 旗桿
+      ctx.strokeStyle = '#d4a017';
+      ctx.lineWidth   = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(pt.x + 18, pt.y - 8);
+      ctx.lineTo(pt.x + 18, pt.y - 30);
+      ctx.stroke();
+      // 旗面
+      ctx.save();
+      ctx.translate(pt.x + 18, pt.y - 30);
+      ctx.rotate((wave * Math.PI) / 180);
+      ctx.fillStyle = COLOR_HEX[pt.colorId];
+      ctx.fillRect(0, 0, 13, 8);
+      ctx.restore();
+    }
   }
 
-  // 四個色塊
-  const colors = [0, 1, 2, 3];
-  colors.forEach((colorId, i) => {
-    const lit = synthesizedColors.has(colorId);
-    const iy  = py + padV + i * (iSize + gap) + iSize / 2;
-
-    ctx.save();
-    if (lit) {
-      ctx.shadowColor = COLOR_HEX[colorId];
-      ctx.shadowBlur  = 16;
-    }
-    ctx.fillStyle = lit ? COLOR_HEX[colorId] + 'dd' : '#1e293b';
+  // ── 濺起粒子 ──
+  for (const s of mapSplash) {
+    const progress = s.frame / s.maxFrame;
+    ctx.globalAlpha = 1 - progress;
+    ctx.fillStyle   = s.color;
     ctx.beginPath();
-    ctx.roundRect(cx - iSize / 2, iy - iSize / 2, iSize, iSize, 10);
+    ctx.arc(s.x, s.y, 2 + progress * 5, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = lit ? COLOR_HEX[colorId] : '#334155';
-    ctx.lineWidth = lit ? 2 : 1;
-    ctx.beginPath();
-    ctx.roundRect(cx - iSize / 2, iy - iSize / 2, iSize, iSize, 10);
-    ctx.stroke();
-    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
 
-    // 圖示
-    ctx.font = `${lit ? 26 : 22}px Arial`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.globalAlpha = lit ? 1 : 0.35;
-    const emoji = ['🔴','🟡','🔵','🟢'][colorId];
-    ctx.fillText(emoji, cx, iy);
-    ctx.globalAlpha = 1;
-  });
+  // ── 船 ──
+  ctx.font         = '20px Arial';
+  ctx.textAlign    = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('⛵', mapShip.x, mapShip.y);
+
+  // ── 出發港標籤 ──
+  ctx.font      = '9px Arial';
+  ctx.fillStyle = 'rgba(255,255,255,0.35)';
+  ctx.textAlign = 'center';
+  ctx.fillText('出發港', MAP_HOME_X, MAP_HOME_Y + 14);
+
+  ctx.restore();
 }
 
 
@@ -2726,7 +2773,7 @@ function draw() {
   drawBoard(ctx);
   drawJPBars(ctx);
   drawWaysDisplay(ctx);
-  drawCollectionPanel(ctx);
+  drawMapPanel(ctx);
   drawScoreAccumulator(ctx);
   drawFlyingScores(ctx);
   drawParticles(ctx);
