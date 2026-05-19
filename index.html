@@ -360,6 +360,30 @@ let board = [];          // board[col][row] = { id, yOffset, isMatched, scale, _
 // === 合成機制狀態 ===
 let splitCount = [1, 1, 1, 1];      // 各色分裂倍數（0=紅,1=黃,2=藍,3=綠）
 let synthesizedColors = new Set();   // 本局已合成的顏色（JP判定用）
+// === 航海地圖面板常數與狀態 ===
+const MAP_PX = 970, MAP_PY = 120, MAP_PW = 200, MAP_PH = 520;
+const MAP_POINTS = [
+  { colorId: 0, label: '火山島', icon: '🌋', x: MAP_PX + 56,  y: MAP_PY + 99  },
+  { colorId: 1, label: '沙漠城', icon: '🏜️', x: MAP_PX + 156, y: MAP_PY + 73  },
+  { colorId: 2, label: '冰山',   icon: '🧊', x: MAP_PX + 40,  y: MAP_PY + 390 },
+  { colorId: 3, label: '叢林',   icon: '🌿', x: MAP_PX + 150, y: MAP_PY + 426 },
+];
+const MAP_HOME_X = MAP_PX + 100, MAP_HOME_Y = MAP_PY + 468;
+const MAP_FLY_FRAMES   = 20;
+const MAP_PAUSE_FRAMES = 12;
+
+let mapShip = {
+  x: MAP_HOME_X, y: MAP_HOME_Y,
+  sx: MAP_HOME_X, sy: MAP_HOME_Y,
+  tx: MAP_HOME_X, ty: MAP_HOME_Y,
+  frame: 0, totalFrames: MAP_FLY_FRAMES,
+  flying: false,
+  pauseTimer: 0,
+  targetColorId: -1,
+  returnPending: false,
+};
+let mapFlags  = [false, false, false, false];
+let mapSplash = [];  // [{x, y, vx, vy, frame, maxFrame, color}]
 let mergedCells = [];                // [{col, row, colorId, size, colorId2?}]
 // 合成動畫序列
 const SYNTH_FLASH_FRAMES     = 28;   // 基礎合成閃光幀數
