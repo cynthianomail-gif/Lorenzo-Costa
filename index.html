@@ -731,6 +731,23 @@ function findBaseSynthCandidates() {
   return ops;
 }
 
+// 觸發船跳躍動畫（每次合成時呼叫）
+function triggerShipJump(colorId) {
+  const pt = MAP_POINTS[colorId];
+  if (!pt) return;
+  // 若船正在飛行中，直接覆蓋目標（優先最新合成）
+  mapShip.sx            = mapShip.x;
+  mapShip.sy            = mapShip.y;
+  mapShip.tx            = pt.x;
+  mapShip.ty            = pt.y;
+  mapShip.frame         = 0;
+  mapShip.totalFrames   = MAP_FLY_FRAMES;
+  mapShip.flying        = true;
+  mapShip.pauseTimer    = 0;
+  mapShip.targetColorId = colorId;
+  mapShip.returnPending = mapFlags[colorId]; // 已插旗 → 落地後回家
+}
+
 // 執行單一基礎合成
 function applySingleSynthesis(col, row) {
   const a = board[col][row];
