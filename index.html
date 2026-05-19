@@ -1570,24 +1570,12 @@ function drawMapPanel(ctx) {
   }
   ctx.globalAlpha = 1;
 
-  // ── 船（實色幾何形狀） ──
+  // ── 船 ──
   ctx.save();
-  ctx.translate(mapShip.x, mapShip.y);
-  ctx.fillStyle   = '#fbbf24';   // 琥珀金
-  ctx.strokeStyle = '#92400e';
-  ctx.lineWidth   = 1;
-  // 船帆（三角）
-  ctx.beginPath();
-  ctx.moveTo(1, -11); ctx.lineTo(8, -2); ctx.lineTo(1, -1);
-  ctx.closePath(); ctx.fill(); ctx.stroke();
-  // 桅桿
-  ctx.fillStyle = '#fbbf24';
-  ctx.fillRect(-0.75, -11, 1.5, 13);
-  // 船身（梯形）
-  ctx.beginPath();
-  ctx.moveTo(-8, 1); ctx.lineTo(8, 1);
-  ctx.lineTo(5, 7);  ctx.lineTo(-5, 7);
-  ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.font = '18px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('⛵', mapShip.x, mapShip.y);
   ctx.restore();
 
   // ── 伊奧科斯港標籤 ──
