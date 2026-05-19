@@ -766,6 +766,7 @@ function applySingleSynthesis(col, row) {
   const colorId = Math.floor(a.id / 2);
   const displayCount = splitCount[colorId] || 1; // 合成前的值 = 此格的顯示數
   const MAX_SPLIT = inFG ? 5 : 2;
+  const _isNewColor = !synthesizedColors.has(colorId);
   if (inFG) {
     // FG 中：直接累積（不重設為2）
     if (splitCount[colorId] < MAX_SPLIT) splitCount[colorId]++;
@@ -780,7 +781,7 @@ function applySingleSynthesis(col, row) {
   board[col][row]     = { id: -1, isMerged: true, mergeId, colorId, mergeSize: 2, mergeCol: col, mergeRow: row, isMergeSlave: false, isMatched: false, yOffset: 0, scale: 1 };
   board[col + 1][row] = { id: -1, isMerged: true, mergeId, colorId, mergeSize: 2, mergeCol: col, mergeRow: row, isMergeSlave: true,  isMatched: false, yOffset: 0, scale: 1 };
   mergedCells.push({ col, row, colorId, size: 2, displayCount });
-  triggerShipJump(colorId);
+  if (_isNewColor) triggerShipJump(colorId);
   return true;
 }
 
@@ -1500,8 +1501,22 @@ function drawMapPanel(ctx) {
   ctx.stroke(); ctx.setLineDash([]);
 
   // ── 地形目標點 ──
+  // 最後一點預報：只剩一個未完成時，該點脈動發光
+  const _remaining3 = synthesizedColors.size === 3;
   for (const pt of MAP_POINTS) {
     const lit = synthesizedColors.has(pt.colorId);
+    const isLastTarget = _remaining3 && !lit;
+
+    // 預報光暈（最後一點）
+    if (isLastTarget) {
+      const pulse = 0.5 + Math.sin(Date.now() / 280) * 0.5;
+      ctx.save();
+      ctx.shadowColor = COLOR_HEX[pt.colorId];
+      ctx.shadowBlur  = 14 + pulse * 18;
+      ctx.fillStyle   = COLOR_HEX[pt.colorId] + Math.floor(pulse * 0x55).toString(16).padStart(2, '0');
+      ctx.beginPath(); ctx.arc(pt.x, pt.y, 20 + pulse * 4, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
 
     if (lit) {
       ctx.save();
