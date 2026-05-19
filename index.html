@@ -1574,6 +1574,11 @@ function drawMapPanel(ctx) {
   ctx.save();
   ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = 'source-over';
+  ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
+  ctx.filter = 'none';
+  // 深色底圓讓 emoji 在亮背景上也清楚
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.beginPath(); ctx.arc(mapShip.x, mapShip.y, 11, 0, Math.PI * 2); ctx.fill();
   ctx.font = '18px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('⛵', mapShip.x, mapShip.y);
   ctx.restore();
