@@ -607,6 +607,14 @@ function resetRoundState() {
   if (!inFG) splitCount = [1, 1, 1, 1];
   synthesizedColors = new Set();
   mergedCells = [];
+  // 地圖面板：每局重置旗子；船回出發港
+  mapFlags = [false, false, false, false];
+  mapSplash = [];
+  mapShip.x = MAP_HOME_X; mapShip.y = MAP_HOME_Y;
+  mapShip.sx = MAP_HOME_X; mapShip.sy = MAP_HOME_Y;
+  mapShip.tx = MAP_HOME_X; mapShip.ty = MAP_HOME_Y;
+  mapShip.flying = false; mapShip.pauseTimer = 0;
+  mapShip.returnPending = false; mapShip.targetColorId = -1;
   synthOps = []; synthOpIdx = -1; synthOpPhase = 'idle'; synthOpTimer = 0;
 }
 
