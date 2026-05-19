@@ -399,7 +399,8 @@ let bottomSpecial = [];  // bottomSpecial[col] = SPECIAL 類型（本局）
 let _affectedCols = [];  // 本次消除影響的欄位
 
 let totalScore = 0;
-let winScore = 0;
+let winScore = 0;   // 本局 spin 所有 cascade 加總（下方 WIN 顯示）
+let roundScore = 0; // 本回合（當前 cascade）得分（上方累積欄顯示）
 let betAmount = 100;
 let multiplier = 1;      // 倍數欄位當前值（本局）
 let comboCount = 0;      // 本局連爆次數
@@ -594,6 +595,7 @@ function generateBoard() {
 
 function resetRoundState() {
   comboCount = 0;
+  roundScore = 0;
   flyingScores = [];
   particles = [];
   scoreTexts = [];
@@ -1076,7 +1078,7 @@ function drawCenterWin(ctx) {
   const cx = GRID_X + GRID_W / 2;
   const cy = GRID_Y + GRID_H / 2;
 
-  const text = winScore.toLocaleString();
+  const text = roundScore.toLocaleString();
 
   ctx.save();
   ctx.globalAlpha = alpha;
@@ -1607,7 +1609,7 @@ function drawScoreAccumulator(ctx) {
   const bx = GRID_X + GRID_W / 2 - 100;
   const by = GRID_Y - 58;
   const bw = 200, bh = 44;
-  const hasWin = winScore > 0;
+  const hasWin = roundScore > 0;
   const pulse = hasWin ? 0.7 + 0.3 * Math.sin(Date.now() / 200) : 1;
 
   ctx.save();
@@ -1622,11 +1624,11 @@ function drawScoreAccumulator(ctx) {
 
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillStyle = '#64748b'; ctx.font = '11px Arial';
-  ctx.fillText('得分', bx + bw / 2, by + 9);
+  ctx.fillText('回合得分', bx + bw / 2, by + 9);
   ctx.fillStyle = hasWin ? '#facc15' : '#475569';
   ctx.font = `bold ${hasWin ? 22 : 20}px Arial`;
   if (hasWin) { ctx.shadowColor = '#facc15'; ctx.shadowBlur = 8 * pulse; }
-  ctx.fillText(winScore.toLocaleString(), bx + bw / 2, by + bh / 2 + 5);
+  ctx.fillText(roundScore.toLocaleString(), bx + bw / 2, by + bh / 2 + 5);
   ctx.shadowBlur = 0;
   ctx.restore();
 }
@@ -2161,8 +2163,8 @@ function update(dt) {
 
       const win = calcWin();
       if (win > 0) {
+        roundScore = win;
         winScore += win;
-        totalScore += win;
         comboCount++;
         if (comboCount === 1) stats.hits++;
         popWaitTimer = 90;
