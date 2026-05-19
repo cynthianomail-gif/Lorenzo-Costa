@@ -1173,6 +1173,65 @@ function updateParticles() {
   });
 }
 
+function updateMapPanel() {
+  // 更新濺起粒子
+  mapSplash = mapSplash.filter(s => {
+    s.frame++; s.x += s.vx; s.y += s.vy;
+    return s.frame < s.maxFrame;
+  });
+
+  if (mapShip.flying) {
+    mapShip.frame++;
+    const t = Math.min(mapShip.frame / mapShip.totalFrames, 1);
+
+    if (t >= 1) {
+      // 落地
+      mapShip.x = mapShip.tx;
+      mapShip.y = mapShip.ty;
+      mapShip.flying = false;
+
+      // 濺起粒子（5 個）
+      const splashColor = mapShip.targetColorId >= 0
+        ? COLOR_HEX[mapShip.targetColorId] : '#ffffff';
+      for (let i = 0; i < 5; i++) {
+        const angle = (i / 5) * Math.PI * 2;
+        mapSplash.push({
+          x: mapShip.x, y: mapShip.y,
+          vx: Math.cos(angle) * 1.8, vy: Math.sin(angle) * 1.8,
+          frame: 0, maxFrame: 10, color: splashColor,
+        });
+      }
+
+      // 首次到達 → 插旗
+      if (mapShip.targetColorId >= 0 && !mapFlags[mapShip.targetColorId]) {
+        mapFlags[mapShip.targetColorId] = true;
+      }
+
+      mapShip.pauseTimer = MAP_PAUSE_FRAMES;
+
+    } else {
+      // 拋物線插值
+      const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t; // easeInOut
+      mapShip.x = mapShip.sx + (mapShip.tx - mapShip.sx) * ease;
+      const arcH = Math.abs(mapShip.tx - mapShip.sx) * 0.4 + 30;
+      mapShip.y = mapShip.sy + (mapShip.ty - mapShip.sy) * ease
+                  - arcH * 4 * t * (1 - t);
+    }
+
+  } else if (mapShip.pauseTimer > 0) {
+    mapShip.pauseTimer--;
+    if (mapShip.pauseTimer === 0 && mapShip.returnPending) {
+      // 已插旗目標，飛回出發港
+      mapShip.sx = mapShip.x; mapShip.sy = mapShip.y;
+      mapShip.tx = MAP_HOME_X; mapShip.ty = MAP_HOME_Y;
+      mapShip.frame = 0; mapShip.totalFrames = MAP_FLY_FRAMES;
+      mapShip.flying = true;
+      mapShip.returnPending = false;
+      mapShip.targetColorId = -1;
+    }
+  }
+}
+
 function drawParticles(ctx) {
   particles.forEach(p => {
     ctx.save();
@@ -1872,6 +1931,7 @@ function update(dt) {
     if (m._advFlash > 0) m._advFlash--;
   }
   updateParticles();
+  updateMapPanel();
   updateScoreTexts();
   updateFlyingScores();
   updateBossCardPick();
