@@ -361,14 +361,16 @@ let board = [];          // board[col][row] = { id, yOffset, isMatched, scale, _
 let splitCount = [1, 1, 1, 1];      // 各色分裂倍數（0=紅,1=黃,2=藍,3=綠）
 let synthesizedColors = new Set();   // 本局已合成的顏色（JP判定用）
 // === 航海地圖面板常數與狀態 ===
-const MAP_PX = 970, MAP_PY = 120, MAP_PW = 200, MAP_PH = 520;
+const MAP_PX = 970, MAP_PY = 120, MAP_PW = 200, MAP_PH = 462;
+const MAP_JP_H = 72;  // JP獎勵框高度
+const MAP_PLACE_NAMES = ['赫淮斯托斯島', '黃金海岸', '撞岩海峽', '科爾基斯聖林'];
 const MAP_POINTS = [
-  { colorId: 0, label: '火山島', icon: '🌋', x: MAP_PX + 56,  y: MAP_PY + 99  },
-  { colorId: 1, label: '沙漠城', icon: '🏜️', x: MAP_PX + 156, y: MAP_PY + 73  },
-  { colorId: 2, label: '冰山',   icon: '🧊', x: MAP_PX + 40,  y: MAP_PY + 390 },
-  { colorId: 3, label: '叢林',   icon: '🌿', x: MAP_PX + 150, y: MAP_PY + 426 },
+  { colorId: 0, label: '火山島', icon: '🌋', x: MAP_PX + 62,  y: MAP_PY + MAP_JP_H + 58  },
+  { colorId: 1, label: '沙漠城', icon: '🏜️', x: MAP_PX + 151, y: MAP_PY + MAP_JP_H + 128 },
+  { colorId: 2, label: '冰山',   icon: '🧊', x: MAP_PX + 44,  y: MAP_PY + MAP_JP_H + 228 },
+  { colorId: 3, label: '叢林',   icon: '🌿', x: MAP_PX + 151, y: MAP_PY + MAP_JP_H + 308 },
 ];
-const MAP_HOME_X = MAP_PX + 100, MAP_HOME_Y = MAP_PY + 468;
+const MAP_HOME_X = MAP_PX + 100, MAP_HOME_Y = MAP_PY + MAP_JP_H + 356;
 const MAP_FLY_FRAMES   = 20;
 const MAP_PAUSE_FRAMES = 12;
 
@@ -1415,92 +1417,126 @@ function drawWaysDisplay(ctx) {
 function drawMapPanel(ctx) {
   const px = MAP_PX, py = MAP_PY, pw = MAP_PW, ph = MAP_PH;
   const allLit = synthesizedColors.size >= 4;
+  const t = Date.now();
 
   ctx.save();
 
-  // ── 背景：深色漸層 + 像素格線 ──
-  const grad = ctx.createLinearGradient(px, py, px + pw, py + ph);
-  grad.addColorStop(0, '#0a1628');
-  grad.addColorStop(1, '#0d2818');
-  ctx.fillStyle = grad;
-  ctx.beginPath();
-  ctx.roundRect(px, py, pw, ph, 8);
-  ctx.fill();
+  // ── 整體背景 ──
+  const bg = ctx.createLinearGradient(px, py, px + pw, py + ph);
+  bg.addColorStop(0, '#0a1628');
+  bg.addColorStop(1, '#0d2818');
+  ctx.fillStyle = bg;
+  ctx.beginPath(); ctx.roundRect(px, py, pw, ph, 8); ctx.fill();
 
+  // ── JP 獎勵框 ──
+  const jpY = py, jpH = MAP_JP_H;
+  const jpGrad = ctx.createLinearGradient(px, jpY, px + pw, jpY + jpH);
+  jpGrad.addColorStop(0, allLit ? '#2a1800' : '#1a1208');
+  jpGrad.addColorStop(1, allLit ? '#1a0e00' : '#110c05');
+  ctx.fillStyle = jpGrad;
+  ctx.beginPath(); ctx.roundRect(px, jpY, pw, jpH, [8, 8, 0, 0]); ctx.fill();
+
+  if (allLit) {
+    const glow = 0.4 + Math.sin(t / 320) * 0.28;
+    ctx.save();
+    ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 20 + Math.sin(t / 250) * 8;
+    ctx.globalAlpha = glow;
+    ctx.fillStyle = '#ffd70020';
+    ctx.beginPath(); ctx.roundRect(px + 4, jpY + 4, pw - 8, jpH - 8, 6); ctx.fill();
+    ctx.restore();
+  }
+
+  // JP小標題
+  ctx.font = 'bold 9px Arial';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = allLit ? '#ffd700' : '#a07830';
+  ctx.fillText('── JP 獎勵 ──', px + pw / 2, jpY + 14);
+
+  // 金羊毛大字
+  ctx.font = 'bold 16px Arial';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = allLit ? '#ffe566' : '#c89040';
+  if (allLit) { ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 14; }
+  ctx.fillText('🐏  金羊毛', px + pw / 2, jpY + 36);
+  ctx.shadowBlur = 0;
+
+  // 說明文字
+  ctx.font = '8px Arial';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = allLit ? '#ffd70099' : '#605030';
+  ctx.fillText('集齊四海域解鎖', px + pw / 2, jpY + 56);
+
+  // JP框底部分隔線
+  ctx.strokeStyle = allLit ? '#ffd70044' : '#ffffff14';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(px + 8, jpY + jpH - 1); ctx.lineTo(px + pw - 8, jpY + jpH - 1); ctx.stroke();
+
+  // ── 像素格線（地圖區） ──
   ctx.save();
-  ctx.beginPath();
-  ctx.roundRect(px, py, pw, ph, 8);
-  ctx.clip();
-  ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+  ctx.beginPath(); ctx.roundRect(px, py, pw, ph, 8); ctx.clip();
+  ctx.strokeStyle = 'rgba(255,255,255,0.045)';
   ctx.lineWidth = 1;
   for (let gx = px; gx <= px + pw; gx += 20) {
-    ctx.beginPath(); ctx.moveTo(gx, py); ctx.lineTo(gx, py + ph); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(gx, py + jpH); ctx.lineTo(gx, py + ph); ctx.stroke();
   }
-  for (let gy = py; gy <= py + ph; gy += 20) {
+  for (let gy = py + jpH; gy <= py + ph; gy += 20) {
     ctx.beginPath(); ctx.moveTo(px, gy); ctx.lineTo(px + pw, gy); ctx.stroke();
   }
   ctx.restore();
 
   // ── 外框 ──
-  if (allLit) {
-    ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 20;
-    ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 2;
-  } else {
-    ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 1;
-  }
+  if (allLit) { ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 18; }
+  ctx.strokeStyle = allLit ? '#ffd700' : 'rgba(255,255,255,0.15)';
+  ctx.lineWidth = allLit ? 2 : 1;
   ctx.beginPath(); ctx.roundRect(px, py, pw, ph, 8); ctx.stroke();
   ctx.shadowBlur = 0;
+
+  // ── 虛線路徑 ──
+  ctx.setLineDash([3, 6]);
+  ctx.strokeStyle = 'rgba(255,255,255,0.07)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(MAP_POINTS[0].x, MAP_POINTS[0].y);
+  for (let i = 1; i < MAP_POINTS.length; i++) ctx.lineTo(MAP_POINTS[i].x, MAP_POINTS[i].y);
+  ctx.lineTo(MAP_HOME_X, MAP_HOME_Y);
+  ctx.stroke(); ctx.setLineDash([]);
 
   // ── 地形目標點 ──
   for (const pt of MAP_POINTS) {
     const lit = synthesizedColors.has(pt.colorId);
 
-    // 發光圈（已合成）
     if (lit) {
       ctx.save();
-      ctx.shadowColor = COLOR_HEX[pt.colorId];
-      ctx.shadowBlur  = 18;
-      ctx.fillStyle   = COLOR_HEX[pt.colorId] + '30';
-      ctx.beginPath();
-      ctx.arc(pt.x, pt.y, 22, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.shadowColor = COLOR_HEX[pt.colorId]; ctx.shadowBlur = 16;
+      ctx.fillStyle   = COLOR_HEX[pt.colorId] + '28';
+      ctx.beginPath(); ctx.arc(pt.x, pt.y, 20, 0, Math.PI * 2); ctx.fill();
       ctx.restore();
     }
 
-    // 地點圓圈
-    ctx.fillStyle   = lit ? COLOR_HEX[pt.colorId] + 'bb' : '#1e293b';
-    ctx.strokeStyle = lit ? COLOR_HEX[pt.colorId]        : '#334155';
+    ctx.fillStyle   = lit ? COLOR_HEX[pt.colorId] + 'bb' : '#1a2535';
+    ctx.strokeStyle = lit ? COLOR_HEX[pt.colorId]        : '#2d3f55';
     ctx.lineWidth   = lit ? 2 : 1;
-    ctx.beginPath();
-    ctx.arc(pt.x, pt.y, 18, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
+    ctx.beginPath(); ctx.arc(pt.x, pt.y, 16, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
 
-    // 地形圖示
-    ctx.font         = '16px Arial';
-    ctx.textAlign    = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.globalAlpha  = lit ? 1 : 0.3;
-    ctx.fillStyle    = '#fff';
+    ctx.font = '14px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.globalAlpha = lit ? 1 : 0.3;
+    ctx.fillStyle   = '#fff';
     ctx.fillText(pt.icon, pt.x, pt.y);
-    ctx.globalAlpha  = 1;
+    ctx.globalAlpha = 1;
+
+    // 地名
+    ctx.font = 'bold 8px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    ctx.fillStyle = lit ? COLOR_HEX[pt.colorId] : 'rgba(255,255,255,0.28)';
+    ctx.fillText(MAP_PLACE_NAMES[pt.colorId], pt.x, pt.y + 20);
 
     // 旗子（已插旗）
     if (mapFlags[pt.colorId]) {
-      const wave = Math.sin(Date.now() / 400) * 3;
-      // 旗桿
-      ctx.strokeStyle = '#d4a017';
-      ctx.lineWidth   = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(pt.x + 18, pt.y - 8);
-      ctx.lineTo(pt.x + 18, pt.y - 30);
-      ctx.stroke();
-      // 旗面
+      const wave = Math.sin(t / 400) * 3;
+      ctx.strokeStyle = '#d4a017'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(pt.x + 16, pt.y - 7); ctx.lineTo(pt.x + 16, pt.y - 25); ctx.stroke();
       ctx.save();
-      ctx.translate(pt.x + 18, pt.y - 30);
+      ctx.translate(pt.x + 16, pt.y - 25);
       ctx.rotate((wave * Math.PI) / 180);
       ctx.fillStyle = COLOR_HEX[pt.colorId];
-      ctx.fillRect(0, 0, 13, 8);
+      ctx.fillRect(0, 0, 12, 7);
       ctx.restore();
     }
   }
@@ -1510,23 +1546,18 @@ function drawMapPanel(ctx) {
     const progress = s.frame / s.maxFrame;
     ctx.globalAlpha = 1 - progress;
     ctx.fillStyle   = s.color;
-    ctx.beginPath();
-    ctx.arc(s.x, s.y, 2 + progress * 5, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.beginPath(); ctx.arc(s.x, s.y, 2 + progress * 5, 0, Math.PI * 2); ctx.fill();
   }
   ctx.globalAlpha = 1;
 
   // ── 船 ──
-  ctx.font         = '20px Arial';
-  ctx.textAlign    = 'center';
-  ctx.textBaseline = 'middle';
+  ctx.font = '18px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('⛵', mapShip.x, mapShip.y);
 
-  // ── 出發港標籤 ──
-  ctx.font      = '9px Arial';
-  ctx.fillStyle = 'rgba(255,255,255,0.35)';
-  ctx.textAlign = 'center';
-  ctx.fillText('出發港', MAP_HOME_X, MAP_HOME_Y + 14);
+  // ── 伊奧科斯港標籤 ──
+  ctx.font = '8px Arial'; ctx.fillStyle = 'rgba(255,255,255,0.3)';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  ctx.fillText('伊奧科斯港', MAP_HOME_X, MAP_HOME_Y + 11);
 
   ctx.restore();
 }
