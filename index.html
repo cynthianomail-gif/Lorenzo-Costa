@@ -1344,7 +1344,7 @@ function drawJPBars(ctx) {
   const gap = 10;                    // 與倍數欄位的間距
   const multHalfW = 100;            // 得分累積欄位半寬（200px）
 
-  const zeus = monsters.find(m => m.name === '宙斯') || { jackpot: 99999 };
+  const zeus = monsters.find(m => m.name === '宙斯') || { jackpot: 999999 };
   const hera = monsters.find(m => m.name === '赫拉') || { jackpot: 888888 };
   const bars = [
     { label: '⚡ 宙斯 JP', value: zeus.jackpot.toLocaleString(), bx: cx - multHalfW - gap - bw },
@@ -1746,7 +1746,7 @@ function updateBossCardPick() {
       bossCardPick.active = false;
       // JP 發放（grantBossCardJP 已移除，直接結算）
       const bossDefs = [
-        { name: '宙斯', fallback: 99999,  label: '⚡ 宙斯', color: '#facc15', glow: '#fbbf24' },
+        { name: '宙斯', fallback: 999999, label: '⚡ 宙斯', color: '#facc15', glow: '#fbbf24' },
         { name: '赫拉', fallback: 888888, label: '👑 赫拉', color: '#f472b6', glow: '#ec4899' },
       ];
       const bossId = bossCardPick.order[bossCardPick.selected];
@@ -1771,7 +1771,7 @@ function drawBossCardPick(ctx) {
   const cardY = cy - CH / 2;
 
   const BOSS_INFO = [
-    { icon: '⚡', name: '宙斯', color: '#facc15', glow: '#fbbf24', jackpot: (() => { const m = monsters.find(b=>b.name==='宙斯'); return m ? m.jackpot : 99999; })() },
+    { icon: '⚡', name: '宙斯', color: '#facc15', glow: '#fbbf24', jackpot: (() => { const m = monsters.find(b=>b.name==='宙斯'); return m ? m.jackpot : 999999; })() },
     { icon: '👑', name: '赫拉', color: '#ec4899', glow: '#f472b6', jackpot: (() => { const m = monsters.find(b=>b.name==='赫拉'); return m ? m.jackpot : 888888; })() },
   ];
 
